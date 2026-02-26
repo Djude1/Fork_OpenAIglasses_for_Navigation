@@ -1,19 +1,29 @@
 # omni_client.py
 # -*- coding: utf-8 -*-
-import os, base64
-from typing import AsyncGenerator, Dict, Any, List, Optional, Tuple
+import os
+from typing import AsyncGenerator, Dict, Any, List, Optional
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 # ===== OpenAI 兼容（达摩院 DashScope 兼容模式）=====
-API_KEY = os.getenv("DASHSCOPE_API_KEY", "sk-a9440db694924559ae4ebdc2023d2b9a")
+# 必须从环境变量获取 API Key，不再硬编码
+API_KEY = os.getenv("DASHSCOPE_API_KEY")
 if not API_KEY:
-    raise RuntimeError("未设置 DASHSCOPE_API_KEY")
+    # 尝试从 .env 文件加载 (如果存在)
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+        API_KEY = os.getenv("DASHSCOPE_API_KEY")
+    except ImportError:
+        pass
+
+if not API_KEY:
+    raise RuntimeError("未设置 DASHSCOPE_API_KEY 环境变量")
 
 QWEN_MODEL = "qwen-omni-turbo"
 
-# 兼容模式
-oai_client = OpenAI(
+# 兼容模式 (使用异步客户端)
+oai_client = AsyncOpenAI(
     api_key=API_KEY,
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
 )
@@ -35,7 +45,8 @@ async def stream_chat(
     - 以 stream=True 返回
     - 增量产出：OmniStreamPiece(text_delta=?, audio_b64=?)
     """
-    completion = oai_client.chat.completions.create(
+    # 使用 await 调用异步客户端
+    completion = await oai_client.chat.completions.create(
         model=QWEN_MODEL,
         messages=[{"role": "user", "content": content_list}],
         modalities=["text", "audio"],
@@ -44,8 +55,8 @@ async def stream_chat(
         stream_options={"include_usage": True},
     )
 
-    # 注意：OpenAI SDK 的流是同步迭代器；在 async 场景下逐项 yield
-    for chunk in completion:
+    # 异步迭代
+    async for chunk in completion:
         text_delta: Optional[str] = None
         audio_b64: Optional[str] = None
 
