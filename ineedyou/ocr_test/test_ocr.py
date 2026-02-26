@@ -10,8 +10,9 @@ IMAGE_PATH = "sample_text.png"
 
 # Ensure API Key is set
 if not os.getenv("DASHSCOPE_API_KEY"):
-    print("Warning: DASHSCOPE_API_KEY environment variable is not set.")
-    print("Using default key from omni_client.py (which might be invalid).")
+    print("Error: DASHSCOPE_API_KEY environment variable is not set.")
+    print("Please set it before running this script.")
+    # We don't exit here because omni_client might have loaded it from .env
 
 def download_image():
     if not os.path.exists(IMAGE_PATH):
@@ -65,6 +66,7 @@ async def main():
                 full_text += piece.text_delta
     except Exception as e:
         print(f"\nError during API call: {e}")
+        print("Make sure DASHSCOPE_API_KEY is valid.")
 
     print("\n" + "-" * 40)
     print("OCR Test Finished.")
