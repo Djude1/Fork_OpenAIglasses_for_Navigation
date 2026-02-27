@@ -43,7 +43,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     initAuth();
   }, [token]);
 
-  const login = async (username, password) => {
+  const login = async (username: string, password: string): Promise<boolean> => {
     try {
       const res = await axios.post('http://localhost:8000/api/auth/login/', { username, password });
       const newToken = res.data.token;

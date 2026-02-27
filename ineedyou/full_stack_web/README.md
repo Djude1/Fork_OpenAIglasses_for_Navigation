@@ -21,9 +21,20 @@ This is a comprehensive full-stack system designed to manage the AI Glass device
     This command will build the backend and frontend images, start the PostgreSQL database, and bring up the entire stack.
 
 3.  **Access the System**:
-    -   **Frontend**: Open your browser and go to `http://localhost:3000`.
-    -   **Backend API**: `http://localhost:8000/api/` (Browseable API).
-    -   **Admin Panel**: `http://localhost:8000/admin/`.
+    -   **Frontend (Dashboard)**: Open your browser and go to `http://localhost:3000`
+    -   **Backend API**: `http://localhost:8000/api/` (Browsable API)
+    -   **Admin Panel**: `http://localhost:8000/admin/`
+
+## Windows Troubleshooting
+
+If you encounter an error like:
+> `open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified.`
+
+This means Docker Desktop is not running or not properly configured.
+
+1.  **Start Docker Desktop**: Ensure the Docker Desktop application is open and running in the background. The whale icon should be visible in your system tray.
+2.  **Wait for Engine Startup**: It may take a minute for the Docker engine to fully initialize.
+3.  **WSL2 Integration**: If using WSL2, go to Docker Desktop Settings -> Resources -> WSL Integration, and ensure your Linux distribution (e.g., Ubuntu) is checked.
 
 ## Default Credentials
 
