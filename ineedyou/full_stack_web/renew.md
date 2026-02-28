@@ -2,21 +2,23 @@
 
 本文件用于记录每次代码更新的内容，以及你需要执行的操作。
 
-## 2024-05-20 (深度修复后端崩溃、无法连线与登录失败问题)
+## 2024-05-20 (修复 Docker Volume 挂载导致的 `entrypoint.sh` 找不到的问题)
 
 ### 我做了什么 (What I did):
-根据你的反馈，前端 `:3000` 可以显示，但登录提示 "Invalid credentials"，且后端 `:8000` 依然无法连线。这意味着后端容器仍然在启动的某一环节崩溃了（可能是因为数据库初始化脚本出错了导致容器直接退出）。
+你遇到了 `exec /app/entrypoint.sh: no such file or directory` 的错误。这非常典型，具体原因是：
+1. 上次更新中，我在构建 Docker 镜像时使用 `dos2unix` 修复了 `entrypoint.sh` 的换行符（从 Windows 的 CRLF 改为 Linux 的 LF）。
+2. **但是**，在 `docker-compose.yml` 中，有一行配置 `volumes: - ./backend:/app`。这行配置的意思是：**在容器启动时，用你 Windows 电脑本地的 `./backend` 文件夹去覆盖容器里的 `/app` 文件夹。**
+3. 因此，虽然镜像里的文件修好了，但容器一启动，你本地那个带有 Windows CRLF 换行符的错误文件又把修好的文件给覆盖了。Linux 看到 `#!/bin/bash\r` 时，会去寻找一个叫 `bash\r` 的解释器，找不到就会报 `no such file or directory`。
 
-为了彻底解决并排查这个问题，我做了以下重构：
-1. **剥离数据库初始化逻辑**: 我将之前写在 `entrypoint.sh` 里面的复杂 Python 创建用户的代码，单独抽取到了 `backend/init_db.py` 中。这样运行更稳定，报错也更清晰。
-2. **移除启动脚本的致命中断 (`set -e`)**: 之前的脚本只要有任何一个小错误（比如数据库还没准备好、或者用户已经存在报错），整个后端容器就会直接退出崩溃，导致你永远连不上 `8000` 端口。现在，我移除了这个中断指令（并且用 `|| echo` 捕获了错误）。**这意味着，无论数据库有没有初始化成功，Django 的 Web 服务器都一定会启动在 8000 端口上。**
-3. 如果还是有错，你访问 `:8000` 时至少会看到 Django 的黄色报错页面，而不是 "无法连上这个网站"。
+**修复方法**:
+1. 修改了 `docker-compose.yml` 的 `entrypoint`，让它**在容器启动时（即文件被覆盖之后）**，动态执行一次 `dos2unix` 修复换行符，然后再执行脚本。
+2. 增加了 `backend/.gitattributes` 文件，强制 Git 以后在下载 `.sh` 文件时必须保持 LF 换行符，双管齐下。
 
 ### 你需要做什么 (What you need to do):
 
-为了应用这些极其重要的启动脚本更新，请**严格按照以下步骤**执行：
+这次更新修改了 `docker-compose.yml` 核心配置，请**严格按照以下步骤**执行：
 
-1. **停止并彻底清理现有的错误环境** (这一步非常重要，必须加上 `-v` 删掉可能损坏的数据库卷)：
+1. **停止并清理现有环境**：
    ```bash
    docker-compose down -v
    ```
@@ -31,21 +33,9 @@
    docker-compose up -d --build
    ```
 
-4. **等待并检查日志 (关键排错步骤)**：
-   - 等待大概 10-15 秒。
-   - 打开终端，输入以下命令查看后端到底在干什么：
-     ```bash
-     docker-compose logs backend
-     ```
-   - 你应该能在日志中看到：
-     `[1/4] Waiting for PostgreSQL...`
-     `[2/4] Applying migrations...`
-     `[3/4] Creating default users...`
-     `Superuser 'admin' created successfully.`
-     `[4/4] Starting Django Server on 0.0.0.0:8000...`
+4. **验证**：
+   - 稍等 10 秒钟。
+   - 访问 `http://localhost:8000/api/` 或 `http://localhost:8000/admin/`，现在应该可以正常显示了。
+   - 访问 `http://localhost:3000/login`，输入账号 `admin` 密码 `admin123` 即可登录。
 
-5. **再次验证验证**：
-   - 访问 `http://localhost:8000/api/`，只要能看到网页（无论是正常的数据还是黄色的报错页面），都说明后端成功存活了。
-   - 如果此时再去 `http://localhost:3000/login` 输入 `admin` / `admin123`，应该就能顺利登录了。
-
-**如果 `http://localhost:8000` 依然报错，请把上面第 4 步 (`docker-compose logs backend`) 输出的日志发给我，那将直接指出死因！**
+如果还有问题，请运行 `docker-compose logs backend` 并把输出发给我！
