@@ -1,61 +1,32 @@
 #!/bin/bash
-set -e
 
-echo "Waiting for PostgreSQL at $DB_HOST:$DB_PORT..."
-# Wait for the database to be ready
+# We deliberately DO NOT use 'set -e' here so the server always tries to start
+# even if a migration or initialization step fails. This makes debugging much easier.
+
+echo "====================================="
+echo "Starting AI Glass Backend Entrypoint"
+echo "====================================="
+
+echo "[1/4] Waiting for PostgreSQL at $DB_HOST:$DB_PORT..."
+MAX_RETRIES=30
+RETRY_COUNT=0
 while ! nc -z $DB_HOST $DB_PORT; do
   sleep 1
+  RETRY_COUNT=$((RETRY_COUNT+1))
+  if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+      echo "Error: Database did not start in time. Continuing anyway..."
+      break
+  fi
 done
-echo "PostgreSQL started"
+echo "Database check complete."
 
-# Apply database migrations
-echo "Applying migrations..."
-python manage.py makemigrations users devices
-python manage.py migrate
+echo "[2/4] Applying migrations..."
+python manage.py makemigrations users devices || echo "makemigrations failed, moving on..."
+python manage.py migrate || echo "migrate failed, moving on..."
 
-# Create default users using a Python script inside Django's shell context
-echo "Creating default users and generating tokens..."
-python manage.py shell <<EOF
-import os
-import django
-from django.contrib.auth import get_user_model
-from rest_framework.authtoken.models import Token
+echo "[3/4] Creating default users and generating tokens..."
+python init_db.py || echo "init_db.py failed, moving on..."
 
-User = get_user_model()
-try:
-    admin_user, created = User.objects.get_or_create(username='admin', defaults={'email': 'admin@example.com'})
-    if created:
-        admin_user.set_password('admin123')
-        admin_user.is_staff = True
-        admin_user.is_superuser = True
-        admin_user.save()
-        print("Superuser 'admin' created successfully.")
-    else:
-        # Update password just in case it was wrong
-        admin_user.set_password('admin123')
-        admin_user.save()
-        print("Superuser 'admin' already exists (password reset to default).")
-
-    # Generate token
-    Token.objects.get_or_create(user=admin_user)
-
-    regular_user, created = User.objects.get_or_create(username='user1', defaults={'email': 'user1@example.com'})
-    if created:
-        regular_user.set_password('user123')
-        regular_user.save()
-        print("User 'user1' created successfully.")
-    else:
-        # Update password just in case
-        regular_user.set_password('user123')
-        regular_user.save()
-        print("User 'user1' already exists (password reset to default).")
-
-    # Generate token
-    Token.objects.get_or_create(user=regular_user)
-
-except Exception as e:
-    print(f"Error creating users: {e}")
-EOF
-
-echo "Starting server..."
+echo "[4/4] Starting Django Server on 0.0.0.0:8000..."
+echo "====================================="
 exec python manage.py runserver 0.0.0.0:8000

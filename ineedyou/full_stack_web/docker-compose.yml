@@ -31,6 +31,7 @@ services:
       - DB_NAME=aiglass_db
       - DB_USER=aiglass_user
       - DB_PASS=aiglass_password
+      - PYTHONUNBUFFERED=1
     depends_on:
       db:
         condition: service_healthy
