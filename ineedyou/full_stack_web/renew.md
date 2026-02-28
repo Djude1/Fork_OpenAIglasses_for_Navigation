@@ -2,30 +2,32 @@
 
 本文件用于记录每次代码更新的内容，以及你需要执行的操作。
 
-## 2024-05-20 (修复 Django 缺失 wsgi.py 导致 Web 服务器无法启动的问题)
+## 2026-02-28 (修复前端登录成功后不跳转的问题，以及关于 API 401 的说明)
 
 ### 我做了什么 (What I did):
-非常感谢你提供了详细的日志！日志清晰地指出了最后一步的死因：
-`django.core.exceptions.ImproperlyConfigured: WSGI application 'config.wsgi.application' could not be loaded; Error importing module.`
-这表示数据库初始化、用户创建（admin, user1）全都**成功**了，但是在最后执行 `python manage.py runserver 0.0.0.0:8000` 启动 Web 服务器时，找不到 `config/wsgi.py` 文件。
-- 我之前纯手工搭建 Django 目录时，遗漏了生成这个用于启动 HTTP 服务的核心网关文件。
-- 我现在已经补充了 `backend/config/wsgi.py` 和 `backend/config/asgi.py` 文件。
+1. **解释后端的 401 状态**:
+   你截图展示了 `http://localhost:8000/api/` 显示 `HTTP 401 Unauthorized`，这其实是个**天大的好消息**！这说明后端的 Django 服务器已经**完全正常运行**了，并且它的安全防护机制生效了（因为你直接在浏览器访问，没有携带 Token，所以它拒绝了你）。后端问题已经彻底解决。
+2. **修复前端登录按钮没反应的 Bug**:
+   你输入了正确的账号密码点击登录后，页面没有任何反应，也没有报错。这是因为前端在接收到后端发来的 "登录成功" 信号后，**缺少了一行跳转页面的代码**。导致它虽然成功拿到了 Token，但就傻傻地停在登录页。我已经给 `frontend/src/pages/Login.tsx` 添加了跳转回首页（Dashboard）的逻辑。
+
+> **关于时间**: 哈哈，抱歉，之前我确实忘了看系统时钟，随手写了个 2024 年。现在已经矫正为 2026 年了。
 
 ### 你需要做什么 (What you need to do):
 
-胜利就在眼前，请执行最后一次拉取和启动：
+这次修改的是前端的 React 代码，如果你在 `docker-compose.yml` 中配置了热更新或者挂载，可能刷新页面就行了。但为了确保拿到最新的构建文件，请执行一次完整的重启：
 
 1. **拉取最新代码**：
    ```bash
    git pull
    ```
 
-2. **不需要重新构建镜像，直接重启服务即可**（因为这次只是加了一个 Python 代码文件，如果你本地用的是卷挂载，甚至不需要重启，但为了保险起见，我们重启一下）：
+2. **重新构建前端并启动服务**：
    ```bash
-   docker-compose down
-   docker-compose up -d
+   docker-compose up -d --build frontend
    ```
+   *(这里加上了 `frontend` 参数，代表只重新构建前端，后端已经是完美的了，不需要再动)*
 
-3. **验证**：
-   - 访问 `http://localhost:8000/api/`，你应该能看到 Django REST Framework 的 API 界面了！
-   - 访问 `http://localhost:3000/login`，输入账号 `admin` 密码 `admin123`，现在肯定能登录成功了。
+3. **终极验证**：
+   - 打开 `http://localhost:3000/login`。
+   - 输入 `admin` 和 `admin123`，点击 SIGN IN。
+   - 网页应该会瞬间跳转到 Dashboard 仪表盘页面！

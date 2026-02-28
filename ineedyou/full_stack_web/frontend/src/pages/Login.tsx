@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Box, Button, TextField, Typography, Container, Paper } from '@mui/material';
 
 export default function Login() {
   const { login } = useAuth();
+  const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -13,6 +15,9 @@ export default function Login() {
     const success = await login(username, password);
     if (!success) {
       setError('Invalid credentials');
+    } else {
+      // Login successful, redirect to dashboard
+      navigate('/');
     }
   };
 
