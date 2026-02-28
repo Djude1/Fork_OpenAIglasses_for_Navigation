@@ -14,25 +14,45 @@ python manage.py makemigrations users devices
 python manage.py migrate
 
 # Create default users using a Python script inside Django's shell context
-echo "Creating default users..."
+echo "Creating default users and generating tokens..."
 python manage.py shell <<EOF
 import os
 import django
 from django.contrib.auth import get_user_model
+from rest_framework.authtoken.models import Token
 
 User = get_user_model()
 try:
-    if not User.objects.filter(username='admin').exists():
-        User.objects.create_superuser('admin', 'admin@example.com', 'admin123')
-        print("Superuser 'admin' created.")
+    admin_user, created = User.objects.get_or_create(username='admin', defaults={'email': 'admin@example.com'})
+    if created:
+        admin_user.set_password('admin123')
+        admin_user.is_staff = True
+        admin_user.is_superuser = True
+        admin_user.save()
+        print("Superuser 'admin' created successfully.")
     else:
-        print("Superuser 'admin' already exists.")
+        # Update password just in case it was wrong
+        admin_user.set_password('admin123')
+        admin_user.save()
+        print("Superuser 'admin' already exists (password reset to default).")
 
-    if not User.objects.filter(username='user1').exists():
-        User.objects.create_user('user1', 'user1@example.com', 'user123')
-        print("User 'user1' created.")
+    # Generate token
+    Token.objects.get_or_create(user=admin_user)
+
+    regular_user, created = User.objects.get_or_create(username='user1', defaults={'email': 'user1@example.com'})
+    if created:
+        regular_user.set_password('user123')
+        regular_user.save()
+        print("User 'user1' created successfully.")
     else:
-        print("User 'user1' already exists.")
+        # Update password just in case
+        regular_user.set_password('user123')
+        regular_user.save()
+        print("User 'user1' already exists (password reset to default).")
+
+    # Generate token
+    Token.objects.get_or_create(user=regular_user)
+
 except Exception as e:
     print(f"Error creating users: {e}")
 EOF
