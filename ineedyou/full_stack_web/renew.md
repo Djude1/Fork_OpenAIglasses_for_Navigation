@@ -2,40 +2,30 @@
 
 本文件用于记录每次代码更新的内容，以及你需要执行的操作。
 
-## 2024-05-20 (修复 Docker Volume 挂载导致的 `entrypoint.sh` 找不到的问题)
+## 2024-05-20 (修复 Django 缺失 wsgi.py 导致 Web 服务器无法启动的问题)
 
 ### 我做了什么 (What I did):
-你遇到了 `exec /app/entrypoint.sh: no such file or directory` 的错误。这非常典型，具体原因是：
-1. 上次更新中，我在构建 Docker 镜像时使用 `dos2unix` 修复了 `entrypoint.sh` 的换行符（从 Windows 的 CRLF 改为 Linux 的 LF）。
-2. **但是**，在 `docker-compose.yml` 中，有一行配置 `volumes: - ./backend:/app`。这行配置的意思是：**在容器启动时，用你 Windows 电脑本地的 `./backend` 文件夹去覆盖容器里的 `/app` 文件夹。**
-3. 因此，虽然镜像里的文件修好了，但容器一启动，你本地那个带有 Windows CRLF 换行符的错误文件又把修好的文件给覆盖了。Linux 看到 `#!/bin/bash\r` 时，会去寻找一个叫 `bash\r` 的解释器，找不到就会报 `no such file or directory`。
-
-**修复方法**:
-1. 修改了 `docker-compose.yml` 的 `entrypoint`，让它**在容器启动时（即文件被覆盖之后）**，动态执行一次 `dos2unix` 修复换行符，然后再执行脚本。
-2. 增加了 `backend/.gitattributes` 文件，强制 Git 以后在下载 `.sh` 文件时必须保持 LF 换行符，双管齐下。
+非常感谢你提供了详细的日志！日志清晰地指出了最后一步的死因：
+`django.core.exceptions.ImproperlyConfigured: WSGI application 'config.wsgi.application' could not be loaded; Error importing module.`
+这表示数据库初始化、用户创建（admin, user1）全都**成功**了，但是在最后执行 `python manage.py runserver 0.0.0.0:8000` 启动 Web 服务器时，找不到 `config/wsgi.py` 文件。
+- 我之前纯手工搭建 Django 目录时，遗漏了生成这个用于启动 HTTP 服务的核心网关文件。
+- 我现在已经补充了 `backend/config/wsgi.py` 和 `backend/config/asgi.py` 文件。
 
 ### 你需要做什么 (What you need to do):
 
-这次更新修改了 `docker-compose.yml` 核心配置，请**严格按照以下步骤**执行：
+胜利就在眼前，请执行最后一次拉取和启动：
 
-1. **停止并清理现有环境**：
-   ```bash
-   docker-compose down -v
-   ```
-
-2. **拉取最新代码**：
+1. **拉取最新代码**：
    ```bash
    git pull
    ```
 
-3. **重新构建并启动服务**：
+2. **不需要重新构建镜像，直接重启服务即可**（因为这次只是加了一个 Python 代码文件，如果你本地用的是卷挂载，甚至不需要重启，但为了保险起见，我们重启一下）：
    ```bash
-   docker-compose up -d --build
+   docker-compose down
+   docker-compose up -d
    ```
 
-4. **验证**：
-   - 稍等 10 秒钟。
-   - 访问 `http://localhost:8000/api/` 或 `http://localhost:8000/admin/`，现在应该可以正常显示了。
-   - 访问 `http://localhost:3000/login`，输入账号 `admin` 密码 `admin123` 即可登录。
-
-如果还有问题，请运行 `docker-compose logs backend` 并把输出发给我！
+3. **验证**：
+   - 访问 `http://localhost:8000/api/`，你应该能看到 Django REST Framework 的 API 界面了！
+   - 访问 `http://localhost:3000/login`，输入账号 `admin` 密码 `admin123`，现在肯定能登录成功了。
