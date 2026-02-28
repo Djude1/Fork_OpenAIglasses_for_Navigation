@@ -5,16 +5,17 @@ ENV PYTHONUNBUFFERED 1
 
 WORKDIR /app
 
-# Install netcat for wait script (optional, but good for entrypoint)
-RUN apt-get update && apt-get install -y netcat-traditional && rm -rf /var/lib/apt/lists/*
+# Install netcat and dos2unix
+RUN apt-get update && apt-get install -y netcat-traditional dos2unix && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt
 
 COPY . /app/
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+
+# Convert line endings of entrypoint.sh to LF (Unix format) to fix Windows execution issues
+RUN dos2unix /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Use entrypoint script to handle migrations and user creation
 ENTRYPOINT ["/app/entrypoint.sh"]
