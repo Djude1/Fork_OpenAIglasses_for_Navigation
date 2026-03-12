@@ -34,7 +34,19 @@ GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_API_KEY_2: str = os.environ.get("GEMINI_API_KEY_2", "")
 GEMINI_API_KEY_3: str = os.environ.get("GEMINI_API_KEY_3", "")
 GEMINI_API_KEY_4: str = os.environ.get("GEMINI_API_KEY_4", "")
+GEMINI_API_KEY_5: str = os.environ.get("GEMINI_API_KEY_5", "")
+GEMINI_API_KEY_6: str = os.environ.get("GEMINI_API_KEY_6", "")
+GEMINI_API_KEY_7: str = os.environ.get("GEMINI_API_KEY_7", "")
+GEMINI_API_KEY_8: str = os.environ.get("GEMINI_API_KEY_8", "")
+GEMINI_API_KEY_9: str = os.environ.get("GEMINI_API_KEY_9", "")
+GEMINI_API_KEY_10: str = os.environ.get("GEMINI_API_KEY_10", "")
 GROQ_API_KEY: str = os.environ.get("GROQ_API_KEY", "")
+
+# Google Speech-to-Text 服務帳戶憑證 JSON 路徑
+GOOGLE_CREDENTIALS_PATH: str = os.environ.get(
+    "GOOGLE_CREDENTIALS_PATH",
+    os.path.join(_PROJECT_ROOT, "google_Speech_to_Text.json"),
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 模型路徑（預設為相對路徑 model/，可在 .env 覆寫為絕對路徑）

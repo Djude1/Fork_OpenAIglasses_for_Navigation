@@ -45,6 +45,11 @@ AUDIO_MAP = {
     "拿到物体": os.path.join(AUDIO_BASE_DIR, "音频9.wav"),
     # 開機歡迎音效
     "歡迎使用AI智慧眼鏡": os.path.join(AUDIO_BASE_DIR, "歡迎使用AI智慧眼鏡.wav"),
+    # 喚醒詞 / 結束詞回應音效
+    "開始對話": os.path.join(AUDIO_BASE_DIR, "開始對話.wav"),
+    "結束對話": os.path.join(AUDIO_BASE_DIR, "結束收音.wav"),  # 原 結束對話.wav 已重新命名為 結束收音.wav
+    "結束收音": os.path.join(AUDIO_BASE_DIR, "結束收音.wav"),
+    "使用說明書": os.path.join(AUDIO_BASE_DIR, "使用說明書.wav"),
 }
 
 # 音频缓存，避免重复读取

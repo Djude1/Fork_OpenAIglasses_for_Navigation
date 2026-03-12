@@ -14,10 +14,18 @@ Gemini 2.5 Flash + Gemini TTS 替代 Qwen-Omni-Turbo。
 import json, base64, re, asyncio, threading, urllib.request, urllib.error
 from typing import AsyncGenerator, List, Dict, Any, Optional
 
-from config import GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3, GEMINI_API_KEY_4
+from config import (
+    GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3, GEMINI_API_KEY_4,
+    GEMINI_API_KEY_5, GEMINI_API_KEY_6, GEMINI_API_KEY_7,
+    GEMINI_API_KEY_8, GEMINI_API_KEY_9, GEMINI_API_KEY_10,
+)
 
 # ── API Key 輪換池（自動過濾空值）────────────────────────────────────────────
-_GEMINI_KEYS = [k for k in [GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3, GEMINI_API_KEY_4] if k]
+_GEMINI_KEYS = [k for k in [
+    GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3, GEMINI_API_KEY_4,
+    GEMINI_API_KEY_5, GEMINI_API_KEY_6, GEMINI_API_KEY_7,
+    GEMINI_API_KEY_8, GEMINI_API_KEY_9, GEMINI_API_KEY_10,
+] if k]
 if not _GEMINI_KEYS:
     raise RuntimeError("未設定任何 GEMINI_API_KEY，請在 .env 中至少設定一組金鑰")
 
@@ -108,6 +116,12 @@ def _gemini_request(endpoint: str, payload: bytes, timeout: int) -> dict:
                 print(f"[Gemini] Key {attempt + 1} 配額已用盡，切換下一組...", flush=True)
                 _rotate_key()
                 continue
+            # 印出詳細錯誤內容，方便除錯
+            try:
+                err_body = e.read().decode(errors="replace")
+                print(f"[Gemini] HTTP {e.code} 錯誤內容: {err_body[:500]}", flush=True)
+            except Exception:
+                pass
             raise
     raise RuntimeError(f"所有 {len(_GEMINI_KEYS)} 組 Gemini API Key 配額均已用盡")
 

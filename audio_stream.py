@@ -76,7 +76,7 @@ async def hard_reset_audio(reason: str = ""):
     if reason:
         print(f"[HARD-RESET] {reason}")
 
-VOLUME_GAIN = 5  # 輸出音量倍數（調整此值即可）
+VOLUME_GAIN = 3  # 輸出音量倍數（調整此值即可）
 
 async def broadcast_pcm16_realtime(pcm16: bytes):
     """以 20ms 节拍把 pcm16 发送给所有仍存活的连接；队列满丢尾，保持实时。"""
@@ -91,6 +91,14 @@ async def broadcast_pcm16_realtime(pcm16: bytes):
     if VOLUME_GAIN != 1:
         import audioop
         pcm16 = audioop.mul(pcm16, 2, VOLUME_GAIN)
+
+    # 本機喇叭播放（LOCAL_MODE=true 時同步送給電腦喇叭）
+    try:
+        import local_device
+        if local_device.LOCAL_MODE:
+            local_device.play_pcm_locally(pcm16)
+    except Exception:
+        pass
 
     loop = asyncio.get_event_loop()
     next_tick = loop.time()

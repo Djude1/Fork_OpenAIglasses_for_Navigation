@@ -9,8 +9,8 @@ from navigation_master import NavigationMaster, OrchestratorResult
 from workflow_blindpath import BlindPathNavigator
 from workflow_crossstreet import CrossStreetNavigator
 import torch
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketState
 import uvicorn
@@ -31,6 +31,7 @@ if sys.platform.startswith("win"):
 # ── 從 config.py 讀取所有設定（.env 已在 config.py 中載入）──────────────────
 from config import (
     GROQ_API_KEY,
+    GOOGLE_CREDENTIALS_PATH,
     SAMPLE_RATE,
     CHUNK_MS,
     AUDIO_FORMAT as AUDIO_FMT,
@@ -39,9 +40,6 @@ from config import (
     SERVER_HOST,
     SERVER_PORT,
 )
-
-if not GROQ_API_KEY:
-    raise RuntimeError("未設定 GROQ_API_KEY，請在 .env 中加入該金鑰")
 
 # ---- 引入我们的模块 ----
 from audio_stream import (
@@ -55,11 +53,13 @@ from audio_stream import (
 from omni_client import stream_chat, OmniStreamPiece
 from asr_core import (
     ASRCallback,
-    GroqASR,
+    GroqASR,    # 保留備用
+    GoogleASR,
     set_current_recognition,
     stop_current_recognition,
+    STANDBY_RMS_THRESH,
 )
-from audio_player import initialize_audio_system, play_voice_text
+from audio_player import initialize_audio_system, play_voice_text, play_audio_threadsafe
 
 # ---- 同步录制器 ----
 import sync_recorder
@@ -82,6 +82,27 @@ esp32_camera_ws: Optional[WebSocket] = None
 _welcome_played: bool = False  # 歡迎音效只播一次
 imu_ws_clients: Set[WebSocket] = set()
 esp32_audio_ws: Optional[WebSocket] = None
+
+# ── 說話人聲紋錄製（Enrollment）狀態 ──────────────────────────────────────
+_enroll_active:  bool       = False   # 是否正在錄製聲紋
+_enroll_buffer:  bytearray  = bytearray()  # 收音緩衝
+_enroll_end_ts:  float      = 0.0     # 錄製結束時間戳（monotonic）
+_ENROLL_SEC:     float      = 10.0    # 聲紋錄製秒數
+
+# ── 說話人聲紋測試驗證狀態 ────────────────────────────────────────────────
+_verify_test_active:  bool      = False   # 是否正在收音測試
+_verify_test_buffer:  bytearray = bytearray()  # 測試收音緩衝
+_verify_test_end_ts:  float     = 0.0     # 測試結束時間戳
+_VERIFY_TEST_SEC:     float     = 3.0     # 測試錄音秒數
+
+# ── 說話人聲紋持續監測模式 ────────────────────────────────────────────────
+_verify_continuous:        bool      = False   # 是否啟用持續監測
+_verify_continuous_buf:    bytearray = bytearray()  # 滾動收音緩衝
+_VERIFY_CONTINUOUS_SEC:    float     = 2.0     # 每幾秒做一次驗證
+
+# ── Speaker 聲紋事件 SSE 廣播隊列 ────────────────────────────────────────────
+_speaker_sse_queues: list = []  # 每個 SSE 客戶端一個 asyncio.Queue
+_last_rms_push_ts:   float = 0.0  # 限制 RMS 推送頻率（每 0.15 秒一次）
 
 # 【新增】盲道导航相关全局变量
 blind_path_navigator = None
@@ -377,18 +398,7 @@ async def start_ai_with_text_custom(user_text: str):
     # ── 使用說明書（任何模式下均可觸發）──────────────────────────────────
     if "眼鏡使用說明書" in user_text or "使用說明書" in user_text:
         await ui_broadcast_final("[系統] 播放使用說明")
-        help_lines = [
-            "AI智慧眼鏡使用說明。",
-            "緊急停止，請說：停下所有功能、或停止所有功能。",
-            "盲道導航，請說：開始導航、盲道導航、或幫我導航。停止請說：停止導航。",
-            "過馬路，請說：開始過馬路、或幫我過馬路。停止請說：結束過馬路。",
-            "紅綠燈偵測，請說：檢測紅綠燈、或看紅綠燈。停止請說：停止檢測。",
-            "物品搜尋，請說：找一下，加上物品名稱，例如找一下鑰匙。找到後說：找到了。",
-            "視覺問答，請說：前面有什麼、幫我看、或看看。",
-            "說明結束。",
-        ]
-        for line in help_lines:
-            play_voice_text(line)
+        play_audio_threadsafe("使用說明書")
         return
 
     # 【修改】在导航模式和红绿灯检测模式下，只有特定词才进入omni对话
@@ -397,8 +407,9 @@ async def start_ai_with_text_custom(user_text: str):
         # 如果在导航模式或红绿灯检测模式（非CHAT模式）
         if current_state not in ["CHAT", "IDLE"]:
             # 检查是否是允许的对话触发词
-            allowed_keywords = ["帮我看", "帮我看下", "帮我找", "找一下", "看看", "识别一下",
-                               "幫我看", "幫我看下", "幫我找", "識別一下"]
+            allowed_keywords = ["帮我看", "帮我看下", "帮我看一下", "帮我找",
+                                "帮我找下", "帮我找一下", "找一下", "看看", "识别一下",
+                                "幫我看", "幫我看下", "幫我找", "識別一下"]
             is_allowed_query = any(keyword in user_text for keyword in allowed_keywords)
             
             # 检查是否是导航控制命令
@@ -667,6 +678,9 @@ async def start_ai_with_text(user_text: str):
             omni_conversation_active = False
             
             # 恢复之前的导航状态
+            # 播放結束對話音效
+            play_audio_threadsafe("結束對話")
+
             if orchestrator and omni_previous_nav_state:
                 orchestrator.force_state(omni_previous_nav_state)
                 print(f"[OMNI] 对话结束，恢复到{omni_previous_nav_state}模式")
@@ -704,9 +718,174 @@ def root():
     with open(os.path.join("templates", "index.html"), "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
+@app.get("/speaker", response_class=HTMLResponse)
+def speaker_page():
+    """說話人聲紋管理 Dashboard"""
+    with open(os.path.join("templates", "speaker.html"), "r", encoding="utf-8") as f:
+        return HTMLResponse(f.read())
+
 @app.get("/api/health", response_class=PlainTextResponse)
 def health():
     return "OK"
+
+# ── 說話人聲紋管理 API ───────────────────────────────────────────────────────
+
+@app.post("/api/enroll_speaker")
+async def enroll_speaker():
+    """
+    開始錄製說話人聲紋（10 秒）。
+    使用方式：對著 ESP32 麥克風正常說話，完成後自動建立聲紋。
+    建立成功後說話人驗證立即生效。
+    """
+    global _enroll_active, _enroll_buffer, _enroll_end_ts
+    _enroll_buffer.clear()
+    _enroll_end_ts = time.monotonic() + _ENROLL_SEC
+    _enroll_active = True
+    print(f"[ENROLL] 開始錄製說話人聲紋，請說話 {_ENROLL_SEC:.0f} 秒…", flush=True)
+    return {
+        "status":  "recording",
+        "seconds": _ENROLL_SEC,
+        "message": f"請對著麥克風說話 {_ENROLL_SEC:.0f} 秒，系統正在錄製您的聲紋",
+    }
+
+@app.get("/api/enroll_status")
+async def enroll_status():
+    """查詢聲紋錄製與驗證狀態"""
+    global _enroll_active, _enroll_end_ts
+    remaining = max(0.0, _enroll_end_ts - time.monotonic()) if _enroll_active else 0.0
+    try:
+        from speaker_verifier import speaker_verifier
+        sv_status = speaker_verifier.status_dict()
+    except Exception as ex:
+        sv_status = {"error": str(ex)}
+    return {
+        "enrolling":            _enroll_active,
+        "remaining_sec":        round(remaining, 1),
+        "speaker_verifier":     sv_status,
+    }
+
+@app.post("/api/verify_continuous")
+async def verify_continuous(enabled: bool):
+    """開啟 / 關閉說話人聲紋持續監測模式（每 2 秒印一次相似度到伺服器終端機）"""
+    global _verify_continuous, _verify_continuous_buf
+    _verify_continuous = enabled
+    _verify_continuous_buf.clear()
+    status = "開啟" if enabled else "關閉"
+    print(f"[VERIFY] 持續監測模式已{status}", flush=True)
+    return {"continuous": enabled, "message": f"持續監測已{status}，請看伺服器終端機輸出"}
+
+@app.post("/api/bypass_wake")
+async def bypass_wake(enabled: bool):
+    """開啟 / 關閉旁路模式：跳過喚醒詞「哈囉曼波」，所有 STT 結果直接送給 AI 處理。
+    開啟後終端機會顯示每次 STT 辨識結果（[ASR-旁路] STT → '...'）。"""
+    import asr_core
+    asr_core.set_bypass_wake(enabled)
+    status = "開啟" if enabled else "關閉"
+    return {"bypass_wake": enabled, "message": f"旁路模式已{status}，所有語音將直接送 AI 處理（不需喚醒詞）"}
+
+@app.post("/api/test_speaker_verify")
+async def test_speaker_verify():
+    """
+    開始 3 秒測試錄音，完成後回報聲紋比對結果。
+    使用方式：對著 ESP32 麥克風說話，等 /api/verify_result 查詢結果。
+    """
+    global _verify_test_active, _verify_test_buffer, _verify_test_end_ts
+    _verify_test_buffer.clear()
+    _verify_test_end_ts = time.monotonic() + _VERIFY_TEST_SEC
+    _verify_test_active = True
+    return {
+        "status":  "recording",
+        "seconds": _VERIFY_TEST_SEC,
+        "message": f"請對著麥克風說話 {_VERIFY_TEST_SEC:.0f} 秒，系統正在驗證聲紋",
+    }
+
+@app.get("/api/verify_result")
+async def verify_result():
+    """查詢聲紋測試驗證結果（test_speaker_verify 完成後呼叫）"""
+    global _verify_test_active
+    if _verify_test_active:
+        remaining = max(0.0, _verify_test_end_ts - time.monotonic())
+        return {"status": "recording", "remaining_sec": round(remaining, 1)}
+    if len(_verify_test_buffer) == 0:
+        return {"status": "no_data", "message": "尚未進行測試，請先呼叫 /api/test_speaker_verify"}
+    try:
+        from speaker_verifier import speaker_verifier, THRESHOLD
+        pcm = bytes(_verify_test_buffer)
+        passed, similarity = speaker_verifier.verify_with_score(pcm)
+        return {
+            "status":     "done",
+            "passed":     passed,
+            "similarity": round(similarity, 4) if similarity is not None else None,
+            "threshold":  THRESHOLD,
+            "message":    "✅ 驗證通過" if passed else "❌ 驗證失敗（相似度不足）",
+        }
+    except Exception as ex:
+        return {"status": "error", "detail": str(ex)}
+
+@app.post("/api/delete_speaker")
+async def delete_speaker():
+    """刪除已儲存的說話人聲紋（停用說話人驗證）"""
+    try:
+        from speaker_verifier import speaker_verifier
+        ok = speaker_verifier.delete_enrollment()
+        return {"status": "deleted" if ok else "not_found"}
+    except Exception as ex:
+        return {"status": "error", "detail": str(ex)}
+
+@app.post("/api/speaker_verify_toggle")
+async def speaker_verify_toggle(enabled: bool):
+    """手動開啟 / 關閉說話人驗證（不刪除聲紋）"""
+    try:
+        from speaker_verifier import speaker_verifier
+        if enabled:
+            speaker_verifier.enable()
+        else:
+            speaker_verifier.disable()
+        return {"enabled": enabled}
+    except Exception as ex:
+        return {"status": "error", "detail": str(ex)}
+
+async def _speaker_event_push(data: dict):
+    """推送 Speaker 事件到所有已連線的 SSE 客戶端"""
+    dead = []
+    for q in _speaker_sse_queues:
+        try:
+            q.put_nowait(data)
+        except asyncio.QueueFull:
+            dead.append(q)
+    for q in dead:
+        try:
+            _speaker_sse_queues.remove(q)
+        except ValueError:
+            pass
+
+@app.get("/api/speaker_events")
+async def speaker_events(request: Request):
+    """說話人聲紋事件 SSE 端點（即時推送驗證結果、音量、錄製完成通知）"""
+    q: asyncio.Queue = asyncio.Queue(maxsize=100)
+    _speaker_sse_queues.append(q)
+
+    async def stream():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    data = await asyncio.wait_for(q.get(), timeout=5.0)
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"  # 保持連線
+        finally:
+            try:
+                _speaker_sse_queues.remove(q)
+            except ValueError:
+                pass
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 # 注册 /stream.wav
 register_stream_route(app)
@@ -736,6 +915,17 @@ async def ws_audio(ws: WebSocket):
     recognition = None
     streaming = False
     last_ts = time.monotonic()
+
+    # 若 3 秒內沒收到 START，主動送 RESTART 讓 ESP32 補發
+    async def _auto_restart_if_no_start():
+        await asyncio.sleep(3.0)
+        if not streaming:
+            print("[AUDIO] 未收到 START，送 RESTART 給 ESP32", flush=True)
+            try:
+                await ws.send_text("RESTART")
+            except Exception:
+                pass
+    asyncio.create_task(_auto_restart_if_no_start())
 
     async def stop_rec(send_notice: Optional[str] = None):
         nonlocal recognition, streaming
@@ -786,11 +976,17 @@ async def ws_audio(ws: WebSocket):
                         start_ai_with_text_fn=start_ai_with_text_custom,
                         full_system_reset_fn=full_system_reset,
                         interrupt_lock=interrupt_lock,
+                        # 喚醒詞「哈囉 曼波」→ 播放開始對話音效
+                        on_wake_fn=lambda: play_audio_threadsafe("開始對話"),
+                        # 結束詞「謝謝 曼波」→ 播放結束對話音效
+                        on_end_fn=lambda: play_audio_threadsafe("結束對話"),
+                        # 主動錄音自然結束 → 不播放結束音效
+                        on_recording_end_fn=lambda: play_audio_threadsafe("結束收音"),
                     )
 
-                    # 使用 Groq Whisper 批次 ASR（替代 DashScope）
-                    recognition = GroqASR(
-                        api_key=GROQ_API_KEY,
+                    # 使用 Google Speech-to-Text 串流 ASR（Groq 已保留備用）
+                    recognition = GoogleASR(
+                        credentials_path=GOOGLE_CREDENTIALS_PATH,
                         sample_rate=SAMPLE_RATE,
                         callback=cb,
                     )
@@ -816,12 +1012,128 @@ async def ws_audio(ws: WebSocket):
                         await ws.send_text("ERR:EMPTY_PROMPT")
 
             elif "bytes" in msg and msg["bytes"] is not None:
-                if streaming and recognition:
+                raw_bytes = msg["bytes"]
+
+                # ── 說話人聲紋錄製（同時收音，不阻礙 ASR）──────────────────
+                global _enroll_active, _enroll_buffer, _enroll_end_ts
+                global _verify_test_active, _verify_test_buffer, _verify_test_end_ts
+                global _verify_continuous, _verify_continuous_buf
+                global _last_rms_push_ts
+
+                # 全時 RMS 推送：不論任何模式，只要有 SSE 客戶端就推送音量
+                if _speaker_sse_queues and len(raw_bytes) >= 2:
+                    _now_mono = time.monotonic()
+                    if _now_mono - _last_rms_push_ts >= 0.15:
+                        _last_rms_push_ts = _now_mono
+                        _chunk_rms = audioop.rms(raw_bytes, 2)
+                        asyncio.create_task(_speaker_event_push({
+                            "type": "rms", "rms": _chunk_rms, "ts": time.time(),
+                        }))
+
+                # 持續監測：每累積 _VERIFY_CONTINUOUS_SEC 秒音訊就驗證一次
+                if _verify_continuous:
+                    _verify_continuous_buf.extend(raw_bytes)
+                    needed = int(SAMPLE_RATE * 2 * _VERIFY_CONTINUOUS_SEC)
+                    if len(_verify_continuous_buf) >= needed:
+                        pcm_snap = bytes(_verify_continuous_buf[:needed])
+                        del _verify_continuous_buf[:needed]
+                        try:
+                            # RMS 音量門檻：靜音時不做聲紋比對，避免偽陽性
+                            import struct, math
+                            shorts = struct.unpack(f"<{len(pcm_snap)//2}h", pcm_snap)
+                            rms = math.sqrt(sum(s*s for s in shorts) / len(shorts)) if shorts else 0
+                            # 推送 RMS 數值到 SSE 客戶端（音量儀表用）
+                            asyncio.create_task(_speaker_event_push({
+                                "type": "rms", "rms": round(rms), "ts": time.time(),
+                            }))
+                            if rms < STANDBY_RMS_THRESH:
+                                print(f"[VERIFY] 靜音（RMS={rms:.0f} < {STANDBY_RMS_THRESH}），跳過", flush=True)
+                                asyncio.create_task(_speaker_event_push({
+                                    "type": "silence",
+                                    "rms": round(rms),
+                                    "threshold": STANDBY_RMS_THRESH,
+                                    "ts": time.time(),
+                                }))
+                            else:
+                                from speaker_verifier import speaker_verifier, THRESHOLD
+                                passed, sim = speaker_verifier.verify_with_score(pcm_snap)
+                                if sim is None:
+                                    print("[VERIFY] 無法計算相似度（驗證未啟用或尚無聲紋）", flush=True)
+                                    asyncio.create_task(_speaker_event_push({
+                                        "type": "verify_skip",
+                                        "reason": "no_enrollment",
+                                        "ts": time.time(),
+                                    }))
+                                else:
+                                    bar = int(sim * 30)
+                                    bar_str = "█" * bar + "░" * (30 - bar)
+                                    status = "✅ 通過" if passed else "❌ 拒絕"
+                                    print(
+                                        f"[VERIFY] {status}  相似度={sim:.4f}  門檻={THRESHOLD}"
+                                        f"\n         [{bar_str}]",
+                                        flush=True,
+                                    )
+                                    asyncio.create_task(_speaker_event_push({
+                                        "type": "verify",
+                                        "passed": passed,
+                                        "similarity": round(sim, 4),
+                                        "threshold": THRESHOLD,
+                                        "rms": round(rms),
+                                        "ts": time.time(),
+                                    }))
+                        except Exception as ex:
+                            print(f"[VERIFY] 錯誤: {ex}", flush=True)
+
+                # 單次測試驗證收音
+                if _verify_test_active:
+                    now_mono = time.monotonic()
+                    if now_mono < _verify_test_end_ts:
+                        _verify_test_buffer.extend(raw_bytes)
+                    else:
+                        _verify_test_active = False
+                        print("[VERIFY_TEST] 收音完畢，等待查詢 /api/verify_result", flush=True)
+
+                if _enroll_active:
+                    now_mono = time.monotonic()
+                    if now_mono < _enroll_end_ts:
+                        _enroll_buffer.extend(raw_bytes)
+                    else:
+                        # 錄製時間到，建立聲紋
+                        _enroll_active = False
+                        pcm_snap = bytes(_enroll_buffer)
+                        _enroll_buffer.clear()
+                        _enroll_ok = False
+                        try:
+                            from speaker_verifier import speaker_verifier
+                            _enroll_ok = speaker_verifier.enroll(pcm_snap, SAMPLE_RATE)
+                            msg_txt = "聲紋錄製完成！說話人驗證已啟用。" if _enroll_ok else "聲紋錄製失敗，請重試。"
+                        except Exception as ex:
+                            msg_txt = f"聲紋錄製錯誤: {ex}"
+                        print(f"[ENROLL] {msg_txt}", flush=True)
+                        await ui_broadcast_partial(f"[系統] {msg_txt}")
+                        asyncio.create_task(_speaker_event_push({
+                            "type": "enroll_done",
+                            "ok": _enroll_ok,
+                            "message": msg_txt,
+                            "ts": time.time(),
+                        }))
+
+                if not streaming:
+                    pass  # 尚未收到 START，正常等待中，不印 log
+                elif not recognition:
+                    pass  # ASR 尚未初始化，丟棄
+                else:
                     try:
-                        recognition.send_audio_frame(msg["bytes"])
+                        recognition.send_audio_frame(raw_bytes)
                         last_ts = time.monotonic()
                     except Exception:
                         await on_sdk_error("send_audio_frame failed")
+                # 臨時 debug：確認音訊有到伺服器（每 100 幀印一次）
+                if not hasattr(ws, '_audio_dbg_cnt'):
+                    ws._audio_dbg_cnt = 0
+                ws._audio_dbg_cnt += 1
+                if ws._audio_dbg_cnt % 100 == 1:
+                    print(f"[AUDIO-DBG] 已收 {ws._audio_dbg_cnt} 幀，streaming={streaming}", flush=True)
 
     except Exception as e:
         print(f"\n[WS ERROR] {e}")
@@ -847,15 +1159,21 @@ async def ws_camera_esp(ws: WebSocket):
     await ws.accept()
     print("[CAMERA] ESP32 connected")
 
-    # 硬體連線成功後播放歡迎音效（只播一次，延遲 4 秒等待 ESP32 音訊串流就緒）
+    # 連線後送畫質/幀率指令，降低 2.4GHz 頻寬壓力
+    await asyncio.sleep(0.5)
+    try:
+        await ws.send_text("SET:QUALITY=25")  # 畫質 17→25，幀大小縮小約 40%
+        await ws.send_text("SET:FPS=10")      # 限制 10fps，減少傳輸量
+        print("[CAMERA] 已送出畫質/幀率限制指令（quality=25, fps=10）", flush=True)
+    except Exception:
+        pass
+
+    # 硬體連線成功後播放歡迎音效（每次重連都播，延遲 4 秒等待 ESP32 音訊串流就緒）
     def _play_welcome():
-        global _welcome_played
         import time as _time
-        _time.sleep(4.0)
-        if not _welcome_played:
-            _welcome_played = True
-            from audio_player import play_audio_threadsafe
-            play_audio_threadsafe("歡迎使用AI智慧眼鏡")
+        _time.sleep(6.0)  # 等待 ESP32 音訊串流穩定就緒
+        from audio_player import play_audio_threadsafe
+        play_audio_threadsafe("歡迎使用AI智慧眼鏡")
     threading.Thread(target=_play_welcome, daemon=True).start()
     
     # 【新增】初始化盲道导航器
@@ -955,47 +1273,54 @@ async def ws_camera_esp(ws: WebSocket):
                     
                     out_img = bgr
                     try:
-                        # 【新增】检查是否在红绿灯检测模式
+                        # YOLO 推理丟進執行緒池，避免阻塞 asyncio 事件迴圈
+                        _loop = asyncio.get_event_loop()
+
                         if current_state == "TRAFFIC_LIGHT_DETECTION":
-                            # 红绿灯检测模式：在主线程中直接处理，避免掉帧
                             import trafficlight_detection
-                            result = trafficlight_detection.process_single_frame(bgr, ui_broadcast_callback=ui_broadcast_final)
+                            result = await _loop.run_in_executor(
+                                None,
+                                lambda: trafficlight_detection.process_single_frame(
+                                    bgr, ui_broadcast_callback=ui_broadcast_final
+                                )
+                            )
                             out_img = result['vis_image'] if result['vis_image'] is not None else bgr
 
                         else:
-                            # 其他模式：正常的导航处理
-                            res = orchestrator.process_frame(bgr)
+                            # 其他模式：正常的導航處理（在執行緒池執行，不阻塞收幀）
+                            res = await _loop.run_in_executor(
+                                None, orchestrator.process_frame, bgr
+                            )
 
-                            # 语音引导（内部已节流）
-                            # 注：omni对话时已切换到CHAT模式，不会生成导航语音
                             if res.guidance_text:
                                 try:
-                                    # 先播放语音，再广播到UI
                                     play_voice_text(res.guidance_text)
                                     await ui_broadcast_final(f"[导航] {res.guidance_text}")
                                 except Exception:
                                     pass
 
-                            # 输出图像
                             out_img = res.annotated_image if res.annotated_image is not None else bgr
                     except Exception as e:
                         if frame_counter % 100 == 0:
                             print(f"[NAV MASTER] 处理帧时出错: {e}")
 
-                    # 广播图像
+                    # 廣播圖像（並行送給所有 viewer，不逐一等待）
                     if camera_viewers and out_img is not None:
                         ok, enc = cv2.imencode(".jpg", out_img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                         if ok:
                             jpeg_data = enc.tobytes()
                             dead = []
-                            for viewer_ws in list(camera_viewers):
-                                try:
-                                    await viewer_ws.send_bytes(jpeg_data)
-                                except Exception:
+                            send_tasks = []
+                            viewer_list = list(camera_viewers)
+                            for viewer_ws in viewer_list:
+                                send_tasks.append(viewer_ws.send_bytes(jpeg_data))
+                            results = await asyncio.gather(*send_tasks, return_exceptions=True)
+                            for viewer_ws, r in zip(viewer_list, results):
+                                if isinstance(r, Exception):
                                     dead.append(viewer_ws)
                             for d in dead:
                                 camera_viewers.discard(d)
-                    # 已托管，进入下一帧
+                    # 已托管，進入下一幀
                     continue
 
                 # 【回退】寻物占用或者未解码成功，按原始画面回传
@@ -1288,6 +1613,17 @@ async def on_startup_discovery():
     import socket as _socket
 
     def _get_local_ip_for(peer: str) -> str:
+        peer_prefix = '.'.join(peer.split('.')[:3])  # 例如 "10.207.23"
+        # 優先找與 ESP32 同 /24 子網的本機 IP
+        try:
+            hostname = _socket.gethostname()
+            for info in _socket.getaddrinfo(hostname, None, _socket.AF_INET):
+                ip = info[4][0]
+                if ip.startswith(peer_prefix + '.'):
+                    return ip
+        except Exception:
+            pass
+        # 備用：讓 OS 路由表決定
         s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
         try:
             s.connect((peer, 80))
@@ -1307,8 +1643,19 @@ async def on_startup_discovery():
                 if data == b'AIGLASS_DISCOVER':
                     my_ip = _get_local_ip_for(addr[0])
                     reply = f'AIGLASS_HOST:{my_ip}'.encode()
-                    sock.sendto(reply, addr)
-                    print(f"[DISC] {addr[0]} 詢問 -> 回應 {my_ip}", flush=True)
+                    # 使用獨立 socket 送回應，同時嘗試 unicast 與子網廣播
+                    # 廣播可穿透 WiFi client isolation，確保 ESP32 收到
+                    subnet_bcast = my_ip.rsplit('.', 1)[0] + '.255'
+                    for dest in [addr, (subnet_bcast, addr[1])]:
+                        try:
+                            reply_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+                            reply_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_BROADCAST, 1)
+                            reply_sock.bind((my_ip, 0))
+                            reply_sock.sendto(reply, dest)
+                            reply_sock.close()
+                        except Exception:
+                            pass
+                    print(f"[DISC] {addr[0]} 詢問 -> 回應 {my_ip}（unicast + bcast {subnet_bcast}）", flush=True)
             except _socket.timeout:
                 continue
             except Exception as e:
@@ -1334,7 +1681,108 @@ async def on_shutdown():
     
     print("[SHUTDOWN] 资源清理完成")
 
-# app_main.py —— 在文件里已有的 @app.on_event("startup") 之后，再加一个新的 startup 钩子
+# ── 本機裝置模式（LOCAL_MODE=true）──────────────────────────────────────────
+
+def _init_navigators():
+    """初始化導航器（本機模式與 ESP32 模式共用）。"""
+    global blind_path_navigator, cross_street_navigator, orchestrator
+    if blind_path_navigator is None and yolo_seg_model is not None:
+        blind_path_navigator = BlindPathNavigator(yolo_seg_model, obstacle_detector)
+        print("[NAVIGATION] 盲道導航器已初始化", flush=True)
+    if cross_street_navigator is None and yolo_seg_model is not None:
+        cross_street_navigator = CrossStreetNavigator(
+            seg_model=yolo_seg_model,
+            coco_model=None,
+            obs_model=None,
+        )
+        print("[CROSS_STREET] 過馬路導航器已初始化", flush=True)
+    if orchestrator is None and blind_path_navigator is not None and cross_street_navigator is not None:
+        orchestrator = NavigationMaster(blind_path_navigator, cross_street_navigator)
+        print("[NAV MASTER] 狀態機已初始化", flush=True)
+
+
+@app.on_event("startup")
+async def on_startup_local_mode():
+    """LOCAL_MODE=true 時，以電腦攝影機、麥克風、喇叭取代 ESP32。"""
+    import local_device
+    if not local_device.LOCAL_MODE:
+        return
+
+    # 丟到背景 Task 執行，讓 uvicorn 正常啟動完成，任何例外只印出不崩潰
+    asyncio.create_task(_local_mode_init())
+
+
+async def _local_mode_init():
+    """本機模式初始化（背景執行，不阻塞 uvicorn 啟動）。"""
+    import local_device
+    try:
+        print("[LOCAL] 本機裝置模式已啟用，跳過 ESP32 等待", flush=True)
+
+        # 等待 YOLO 模型載入完畢（最多 60 秒）
+        for _ in range(120):
+            if yolo_seg_model is not None:
+                break
+            await asyncio.sleep(0.5)
+
+        # 初始化導航器
+        _init_navigators()
+
+        # 啟動攝影機 / 麥克風 / 喇叭執行緒
+        local_device.start()
+
+        # 等麥克風執行緒穩定
+        await asyncio.sleep(1.0)
+
+        # 建立 ASR（與 ws_audio 相同的 callback 結構）
+        loop = asyncio.get_running_loop()
+        def post(coro):
+            asyncio.run_coroutine_threadsafe(coro, loop)
+
+        cb = ASRCallback(
+            on_sdk_error=lambda s: print(f"[LOCAL-ASR] SDK 錯誤: {s}", flush=True),
+            post=post,
+            ui_broadcast_partial=ui_broadcast_partial,
+            ui_broadcast_final=ui_broadcast_final,
+            is_playing_now_fn=is_playing_now,
+            start_ai_with_text_fn=start_ai_with_text_custom,
+            full_system_reset_fn=full_system_reset,
+            interrupt_lock=interrupt_lock,
+            on_wake_fn=lambda: play_audio_threadsafe("開始對話"),
+            on_end_fn=lambda: play_audio_threadsafe("結束對話"),
+            on_recording_end_fn=lambda: play_audio_threadsafe("結束收音"),
+        )
+
+        recognition = GoogleASR(
+            credentials_path=GOOGLE_CREDENTIALS_PATH,
+            sample_rate=SAMPLE_RATE,
+            callback=cb,
+        )
+        recognition.start()
+        await set_current_recognition(recognition)
+
+        # 把 ASR 接收端掛到麥克風執行緒
+        local_device.set_local_recognition(recognition)
+
+        # 播放歡迎音效
+        def _welcome():
+            import time as _t
+            _t.sleep(3.0)
+            play_audio_threadsafe("歡迎使用AI智慧眼鏡")
+        threading.Thread(target=_welcome, daemon=True).start()
+
+        print("[LOCAL] 本機模式初始化完成，可直接對電腦麥克風說話", flush=True)
+
+    except Exception as e:
+        import traceback
+        print(f"[LOCAL] 本機模式初始化失敗：{e}", flush=True)
+        traceback.print_exc()
+
+
+@app.on_event("shutdown")
+async def on_shutdown_local_mode():
+    import local_device
+    if local_device.LOCAL_MODE:
+        local_device.stop()
 
 
 # --- 导出接口（可选） ---

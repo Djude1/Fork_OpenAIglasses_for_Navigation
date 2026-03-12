@@ -132,7 +132,7 @@ bool init_camera() {
   if (s) {
 
     s->set_hmirror(s, 1);  // ★ 新增：水平镜像，与人眼左右一致（1=开，0=关）
-    s->set_vflip(s, 0);    // ★ 新增：垂直翻转；若镜头“倒装”，改为 1
+    s->set_vflip(s, 1);    // ★ 新增：垂直翻转；若镜头“倒装”，改为 1
 
     s->set_brightness(s, 0);
     s->set_contrast(s, 1);
@@ -868,9 +868,11 @@ void taskImuLoop(void*){
 void discover_server() {
   WiFiUDP disc;
   disc.begin(12346);
-  Serial.println("[DISC] 廣播尋找伺服器...");
+  Serial.println("[DISC] 廣播尋找伺服器（持續搜尋直到找到）...");
 
-  for (int attempt = 0; attempt < 3; attempt++) {
+  int attempt = 0;
+  while (true) {
+    attempt++;
     disc.beginPacket(IPAddress(255, 255, 255, 255), 12346);
     disc.write((const uint8_t*)"AIGLASS_DISCOVER", 16);
     disc.endPacket();
@@ -883,17 +885,16 @@ void discover_server() {
         disc.read(buf, min(n, (int)sizeof(buf) - 1));
         if (strncmp(buf, "AIGLASS_HOST:", 13) == 0) {
           strncpy(SERVER_HOST, buf + 13, sizeof(SERVER_HOST) - 1);
-          Serial.printf("[DISC] 找到伺服器: %s\n", SERVER_HOST);
+          Serial.printf("[DISC] 找到伺服器: %s（第 %d 次）\n", SERVER_HOST, attempt);
           disc.stop();
           return;
         }
       }
       delay(10);
     }
-    Serial.printf("[DISC] 第 %d 次未回應，重試...\n", attempt + 1);
+    Serial.printf("[DISC] 第 %d 次未回應，繼續搜尋...\n", attempt);
+    delay(500);  // 每次失敗稍微等一下再廣播
   }
-  Serial.printf("[DISC] 探索失敗，使用備援 IP: %s\n", SERVER_HOST);
-  disc.stop();
 }
 
 // ====================================================================

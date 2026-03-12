@@ -21,6 +21,9 @@ IS_CUDA = DEVICE.startswith("cuda")
 AMP_POLICY = os.getenv("AIGLASS_AMP", "bf16").lower()
 if AMP_POLICY not in ("bf16", "fp16", "off"):
     AMP_POLICY = "bf16"
+# YOLOE 的 upsample_nearest2d 不支援 bf16，自動降級至 fp16
+if AMP_POLICY == "bf16":
+    AMP_POLICY = "fp16"
 AMP_DTYPE = torch.bfloat16 if AMP_POLICY == "bf16" else (torch.float16 if AMP_POLICY == "fp16" else None)
 
 # --- GPU 并发限流 (从 blindpath 工作流迁移而来，保持一致) ---
