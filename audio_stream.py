@@ -146,6 +146,8 @@ def register_stream_route(app):
         sc = StreamClient(q=q, abort_event=abort_event)
         stream_clients.add(sc)
 
+        _SILENCE_FRAME = b"\x00" * BYTES_PER_20MS_16K
+
         async def gen():
             yield _wav_header_unknown_size(STREAM_SR, STREAM_CH, STREAM_SW)
             try:
@@ -153,8 +155,12 @@ def register_stream_route(app):
                     if abort_event.is_set():
                         break
                     try:
-                        chunk = await asyncio.wait_for(q.get(), timeout=0.5)
+                        # 以 20ms 為一個節拍輪詢，保持音訊串流速率
+                        # 有資料時播放，無資料時送靜音幀（維持 8kHz 即時速率，防止 Android 斷線）
+                        chunk = await asyncio.wait_for(q.get(), timeout=0.020)
                     except asyncio.TimeoutError:
+                        if not abort_event.is_set():
+                            yield _SILENCE_FRAME
                         continue
                     if abort_event.is_set():
                         break

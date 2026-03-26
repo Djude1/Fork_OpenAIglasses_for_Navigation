@@ -58,7 +58,11 @@ class ObstacleDetectorClient:
         self.model = None
         self.whitelist_embeddings = None
         self.WHITELIST_CLASSES = [
+            # 人（視障者最需要閃避）
+            'person',
+            # 交通工具
             'bicycle', 'car', 'motorcycle', 'bus', 'truck', 'animal', 'scooter', 'stroller', 'dog',
+            # 固定障礙物
             'pole', 'post', 'column', 'pillar', 'stanchion', 'bollard', 'utility pole',
             'telegraph pole', 'light pole', 'street pole', 'signpost', 'support post',
             'vertical post', 'bench', 'chair', 'potted plant', 'hydrant', 'cone', 'stone', 'box'
@@ -152,8 +156,8 @@ class ObstacleDetectorClient:
             # 空间过滤：如果提供了 path_mask，则只保留路径上的障碍物
             if path_mask is not None:
                 intersection_area = np.sum(cv2.bitwise_and(mask, path_mask) > 0)
-                # 必须与路径有足够的重叠
-                if intersection_area < 100 or (intersection_area / area) < 0.01:
+                # 與路徑有任何重疊即保留（降低門檻：從 100px 改為 30px）
+                if intersection_area < 30:
                     continue
 
             cls_id = int(results[0].boxes.cls[i])

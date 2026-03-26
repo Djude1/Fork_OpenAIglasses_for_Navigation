@@ -20,6 +20,11 @@ class AudioService {
   StreamSubscription? _recordSub;
   bool _recording = false;
 
+  // ── TTS 串流重連狀態 ─────────────────────────────────────────────────────
+  bool _shouldPlayStream = false;   // 是否應維持串流播放
+  String? _streamUrl;               // 串流 URL（用於重連）
+  StreamSubscription<PlayerState>? _playerStateSub; // 播放狀態監聽
+
   /// 開始錄音並以 PCM16 Chunk 回呼
   Future<void> startMicrophone({required PcmChunkCallback onChunk}) async {
     if (_recording) return;
@@ -48,12 +53,45 @@ class AudioService {
   // ── TTS 下行播放 ─────────────────────────────────────────────────────────
   final AudioPlayer _player = AudioPlayer();
 
-  Future<void> playStreamWav(String host, int port) async {
-    final url = AppConstants.streamWav(host, port);
+  Future<void> playStreamWav(String host, int port,
+      {bool secure = false, String? baseUrl}) async {
+    final url = AppConstants.streamWav(host, port,
+        secure: secure, baseUrl: baseUrl);
+    _streamUrl = url;
+    _shouldPlayStream = true;
+
+    // 取消舊的狀態監聽，重新設置
+    await _playerStateSub?.cancel();
+    _playerStateSub = _player.onPlayerStateChanged.listen((state) {
+      // 播放完成或非預期停止時，自動重連伺服器串流
+      if (_shouldPlayStream &&
+          (state == PlayerState.completed || state == PlayerState.stopped)) {
+        _scheduleReconnect();
+      }
+    });
+
     await _player.play(UrlSource(url));
   }
 
+  /// 延遲後重新連線 /stream.wav（伺服器可能因重置而切斷連線）
+  void _scheduleReconnect() {
+    if (!_shouldPlayStream || _streamUrl == null) return;
+    Future.delayed(const Duration(milliseconds: 800), () async {
+      if (!_shouldPlayStream || _streamUrl == null) return;
+      try {
+        await _player.play(UrlSource(_streamUrl!));
+      } catch (_) {
+        // 連線失敗，1 秒後再試
+        Future.delayed(const Duration(seconds: 1), _scheduleReconnect);
+      }
+    });
+  }
+
   Future<void> stopPlayback() async {
+    _shouldPlayStream = false;
+    _streamUrl = null;
+    await _playerStateSub?.cancel();
+    _playerStateSub = null;
     await _player.stop();
   }
 
@@ -79,6 +117,10 @@ class AudioService {
   bool get isForegroundRunning => _foregroundRunning;
 
   Future<void> dispose() async {
+    _shouldPlayStream = false;
+    _streamUrl = null;
+    await _playerStateSub?.cancel();
+    _playerStateSub = null;
     await stopMicrophone();
     await _player.dispose();
   }

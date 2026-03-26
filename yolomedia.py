@@ -27,6 +27,7 @@ import bridge_io
 import pygame  # 用于播放本地音频文件
 
 from audio_player import play_audio_threadsafe
+from position_reporter import format_found_message
 # ── 從 config.py 讀取可調參數（可在 .env 覆寫）──────────────────────────────
 from config import (
     PERF_DEBUG,
@@ -638,7 +639,7 @@ def get_center_guidance(object_center, frame_center, threshold=30):
     else:
         return "向上" if dy > 0 else "向下", False  # 对调了
 
-def main(headless: bool = False, prompt_name: str = None, stop_event=None):
+def main(headless: bool = False, prompt_name: str = None, stop_event=None, position_mode: str = "clock"):
 
     # OpenCV 优化
     try:
@@ -708,6 +709,10 @@ def main(headless: bool = False, prompt_name: str = None, stop_event=None):
     # 目标类已在上面的 YOLOE 模式中设置
 
     print(f"[CLASS] target id={target_cls_id}, name={id_to_name.get(target_cls_id, 'N/A')}")
+
+    # ── 方位播報狀態（避免重複播報同一位置）──────────────────────────────────
+    _last_found_announce_ts = 0.0   # 上次播報「找到物品」的時間
+    _FOUND_ANNOUNCE_INTERVAL = 3.0  # 同一物品最少間隔幾秒才重播
     print(f"[阈值] conf >= {CONF_THRESHOLD:.2f}")
 
     # Hand Landmarker
@@ -927,6 +932,24 @@ def main(headless: bool = False, prompt_name: str = None, stop_event=None):
                     if auto_lock_start_time is None:
                         auto_lock_start_time = t_now
                         print(f"[AUTO] 检测到物体，选择最大的（面积: {np.sum(last_detected_mask)}），开始倒计时...")
+
+                        # ── 首次偵測到物品時播報方位 ────────────────────────
+                        if t_now - _last_found_announce_ts >= _FOUND_ANNOUNCE_INTERVAL:
+                            _last_found_announce_ts = t_now
+                            _obj_contours, _ = cv2.findContours(
+                                last_detected_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                            if _obj_contours:
+                                _M = cv2.moments(max(_obj_contours, key=cv2.contourArea))
+                                if _M["m00"] != 0:
+                                    _ocx = float(_M["m10"] / _M["m00"])
+                                    _ocy = float(_M["m01"] / _M["m00"])
+                                    _area = float(np.sum(last_detected_mask))
+                                    _msg = format_found_message(
+                                        PROMPT_NAME, _ocx, _ocy, W, H,
+                                        bbox_area=_area, mode=position_mode)
+                                    print(f"[POSITION] {_msg}")
+                                    play_audio_threadsafe(_msg)
+                        # ──────────────────────────────────────────────────────
                         #play_guidance_audio("检测到物体")  # 添加这行
                     
                     elapsed = t_now - auto_lock_start_time

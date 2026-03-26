@@ -424,7 +424,8 @@
       <div class="controls">
         <button class="ghost" id="btnClear">清空 Final</button>
         <button id="btnReconnect">重连</button>
-        <a id="speakerLink" href="/GlassesBackstage/speaker" style="background:#1a2a3a;border:1px solid #304057;color:#9fb0c3;border-radius:10px;padding:8px 12px;font-weight:600;font-size:14px;text-decoration:none;display:inline-flex;align-items:center;gap:5px">🎙 聲紋</a>
+        <a href="/speaker" style="background:#1a2a3a;border:1px solid #304057;color:#9fb0c3;border-radius:10px;padding:8px 12px;font-weight:600;font-size:14px;text-decoration:none;display:inline-flex;align-items:center;gap:5px">🎙 聲紋</a>
+        <button id="btnDebugRec" onclick="toggleDebugRec()" style="background:#1a2a1a;border:1px solid #2d4a2d;color:#7fc97f">▶ 錄音 Debug</button>
       </div>
     </div>
     <div class="chat-list">
@@ -467,22 +468,11 @@
   "imports": { "three": "https://unpkg.com/three@0.155.0/build/three.module.js" }
 }</script>
 
-<!-- 動態載入主脚本（支援 /GlassesBackstage/ 反向代理路徑） -->
-<script>
-(function(){
-  const base = location.pathname.startsWith('/GlassesBackstage') ? '/GlassesBackstage' : '';
-  const s = document.createElement('script');
-  s.type = 'module';
-  s.src = base + '/static/main.js';
-  document.head.appendChild(s);
-})();
-</script>
+<!-- 主脚本 -->
+<script type="module" src="/static/main.js"></script>
 
 <!-- APP後台切換邏輯 -->
 <script>
-/* ── 路徑前綴（反向代理相容）──────────────────────────────────────────────── */
-const BASE = location.pathname.startsWith('/GlassesBackstage') ? '/GlassesBackstage' : '';
-
 /* ── 狀態 ─────────────────────────────────────────────────────────────────── */
 let _appMode = false;   // 目前是否在 APP後台
 let _token   = null;    // JWT token
@@ -507,7 +497,7 @@ async function doLogin(){
   const pass = document.getElementById('loginPass').value;
   document.getElementById('loginErr').textContent = '';
   try{
-    const res = await fetch(BASE+'/api/login', {
+    const res = await fetch('/api/login', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({username: user, password: pass})
@@ -680,7 +670,7 @@ function apiFetch(url, method='GET', body=null){
     headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${_token}` }
   };
   if(body) opts.body = JSON.stringify(body);
-  return fetch(BASE+url, opts);
+  return fetch(url, opts);
 }
 
 function escHtml(str){
@@ -694,6 +684,43 @@ document.getElementById('loginPass').addEventListener('keydown', e => {
 document.getElementById('loginUser').addEventListener('keydown', e => {
   if(e.key === 'Enter') document.getElementById('loginPass').focus();
 });
+
+/* ── Debug 錄音 ─────────────────────────────────────────────────────────── */
+let _debugRecActive = false;
+
+async function toggleDebugRec(){
+  const btn = document.getElementById('btnDebugRec');
+  if(!_debugRecActive){
+    // 開始錄音
+    try{
+      const res = await fetch('/api/debug_record/start', {method:'POST'});
+      const data = await res.json();
+      if(data.status === 'recording'){
+        _debugRecActive = true;
+        btn.textContent = '⏹ 停止錄音';
+        btn.style.background = '#3a1a1a';
+        btn.style.borderColor = '#8b3030';
+        btn.style.color = '#ff8080';
+      }
+    } catch(e){ alert('無法開始錄音：' + e.message); }
+  } else {
+    // 停止錄音並儲存
+    try{
+      const res = await fetch('/api/debug_record/stop', {method:'POST'});
+      const data = await res.json();
+      _debugRecActive = false;
+      btn.textContent = '▶ 錄音 Debug';
+      btn.style.background = '#1a2a1a';
+      btn.style.borderColor = '#2d4a2d';
+      btn.style.color = '#7fc97f';
+      if(data.status === 'saved'){
+        alert(`錄音已儲存：\n${data.file}\n時長：${data.duration_sec} 秒`);
+      } else {
+        alert('錄音失敗：' + (data.msg || '未知錯誤'));
+      }
+    } catch(e){ alert('無法停止錄音：' + e.message); }
+  }
+}
 </script>
 </body>
 </html>

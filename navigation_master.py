@@ -271,6 +271,10 @@ class NavigationMaster:
         self.tl_major = MajorityFilter(size=8)
         self.tl_last_color = "unknown"
 
+        # 三層並行導航：盲道模式中嵌入紅綠燈偵測（GPU 加速，每幀偵測）
+        self._tl_last_announced = ""        # 上次播報的燈色（避免重複播報）
+        self._tl_announce_ts = 0.0          # 上次紅綠燈播報時間
+
         # 参数（可按现场再调）
         self.FRAMES_CROSS_SEEN = 8
         self.FRAMES_ALIGN_READY = 12
@@ -281,7 +285,7 @@ class NavigationMaster:
         self.ANGLE_ALIGN_THR_DEG = 12.0
         self.OFFSET_ALIGN_THR = 0.15
 
-        self.COOLDOWN_SEC = 0.6
+        self.COOLDOWN_SEC = 0.2
         
         # 找物品状态管理
         self.prev_nav_state_before_search = None  # 找物品前的导航状态，用于恢复
@@ -376,6 +380,9 @@ class NavigationMaster:
         self.tl_last_color = "unknown"
         self.prev_target_state = BLINDPATH_NAV
         self._last_wait_light_announce = 0  # 重置等待绿灯播报时间
+        # 三層並行導航計數器重置
+        self._tl_last_announced = ""
+        self._tl_announce_ts = 0.0
         try:
             self.blind.reset()
         except Exception:
@@ -491,6 +498,34 @@ class NavigationMaster:
                     self.state = SEEKING_CROSSWALK
                     self.cooldown_until = now + self.COOLDOWN_SEC
                     say = "正在接近斑马线，为您对准方向。"
+
+                # ── 第二層：紅綠燈偵測（並行，優先級 80，GPU 每幀偵測） ──
+                try:
+                    tl_color, _tl_meta = self.tld.detect(bgr)
+                    self.tl_major.push(tl_color)
+                    tl_major = self.tl_major.majority()
+                    self.tl_last_color = tl_major
+
+                    # 燈色改變時立即播報；同燈色至少間隔 5 秒才重播
+                    tl_voice_map = {
+                        "red":    "红灯，请停止。",
+                        "green":  "绿灯，可以通行。",
+                        "yellow": "黄灯，请注意。",
+                    }
+                    tl_voice = tl_voice_map.get(tl_major, "")
+                    if tl_voice:
+                        color_changed = (tl_major != self._tl_last_announced)
+                        enough_interval = (now - self._tl_announce_ts) >= 5.0
+                        # 障礙物語音優先（priority=100），不覆蓋
+                        # 障礙物關鍵字：前方有、左侧有、右侧有、停一下、注意避让
+                        _OBS_KWS = ('前方有', '左侧有', '右侧有', '停一下', '注意避让')
+                        has_obstacle = any(kw in say for kw in _OBS_KWS)
+                        if (color_changed or enough_interval) and not has_obstacle:
+                            say = tl_voice
+                            self._tl_last_announced = tl_major
+                            self._tl_announce_ts = now
+                except Exception:
+                    pass  # 紅綠燈偵測失敗不影響主流程
 
                 # 【移除】所有可视化干扰
                 # _draw_badge(ann, f"STATE: {self.state}", (10, 28), fg="white", bg="blue")

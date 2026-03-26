@@ -231,13 +231,13 @@ class BlindPathNavigator:
         
         # 障碍物检测间隔
         # 障碍物检测优化参数 - 从环境变量读取，支持性能调优
-        self.OBSTACLE_DETECTION_INTERVAL = int(os.getenv("AIGLASS_OBS_INTERVAL", "15"))  # 默认每5帧检测一次
-        self.OBSTACLE_CACHE_DURATION_FRAMES = int(os.getenv("AIGLASS_OBS_CACHE_FRAMES", "10"))  # 缓存10帧
-        
+        self.OBSTACLE_DETECTION_INTERVAL = int(os.getenv("AIGLASS_OBS_INTERVAL", "8"))   # FPS=20 下每 0.4 秒偵測一次
+        self.OBSTACLE_CACHE_DURATION_FRAMES = int(os.getenv("AIGLASS_OBS_CACHE_FRAMES", "6"))   # 快取 6 幀
+
         # 障碍物播报管理
         self.last_obstacle_speech = ""
         self.last_obstacle_speech_time = 0
-        self.obstacle_speech_cooldown = 5.0  # 相同障碍物3秒内不重复播报
+        self.obstacle_speech_cooldown = 2.0  # 同一障礙物 2 秒內不重複播報
         
         # 掩码稳定化参数（已禁用光流外推，这些参数不再使用）
         self.MASK_STAB_MIN_AREA = int(os.getenv("AIGLASS_MASK_MIN_AREA", "1500"))
@@ -259,6 +259,12 @@ class BlindPathNavigator:
         self.crosswalk_monitor = CrosswalkAwarenessMonitor()
         logger.info("[BlindPath] 斑马线感知监控器已初始化")
         logger.info(f"[BlindPath] 盲道检测间隔: 每{self.BLINDPATH_DETECTION_INTERVAL}帧")
+
+        # ── 無盲道追蹤（遞增式降溫）──────────────────────────────────────────
+        # 判定「此地確認無盲道」後切換到純避障模式，等待重新偵測到盲道再恢復
+        self._no_path_start_time: float = 0.0   # 開始連續沒有盲道的時間點
+        self._no_path_warn_count: int   = 0     # 已發出的警告次數（最多 2 次）
+        self._no_path_confirmed:  bool  = False # 是否已確認此地無盲道（避障模式中）
     
     def init_traffic_light_detector(self):
         """初始化红绿灯检测器"""
@@ -612,20 +618,64 @@ class BlindPathNavigator:
             #     self.crosswalk_tracker['position_announced'] = True
             
             if blind_path_mask is None:
-                guidance_text = ""
-                # 【移除左上角文字，改为右上角数据面板】
+                now = time.time()
+
+                # 首次失去盲道：記錄時間點，重置警告計數
+                if self._no_path_start_time == 0.0:
+                    self._no_path_start_time = now
+                    self._no_path_warn_count  = 0
+
+                elapsed = now - self._no_path_start_time
+
+                if self._no_path_confirmed:
+                    # ── 已確認無盲道 → 純避障模式，不再重複提示 ──────────────
+                    guidance_text = ""
+                    frame_visualizations.append({
+                        "type": "data_panel",
+                        "data": {"状态": "避障模式（無盲道）"},
+                        "position": (image_width - 210, 20)
+                    })
+
+                elif self._no_path_warn_count == 0 and elapsed >= 2.0:
+                    # ── 第 1 次警告（2 秒後）────────────────────────────────
+                    guidance_text = "找不到盲道"
+                    self._no_path_warn_count = 1
+
+                elif self._no_path_warn_count == 1 and elapsed >= 10.0:
+                    # ── 第 2 次警告（10 秒後）───────────────────────────────
+                    guidance_text = "找不到盲道，請左右移動尋找"
+                    self._no_path_warn_count = 2
+
+                elif self._no_path_warn_count == 2 and elapsed >= 25.0:
+                    # ── 確認無盲道（25 秒後）→ 切換避障模式 ─────────────────
+                    guidance_text = "此地已確認沒有盲道，目前只作避障處理"
+                    self._no_path_confirmed = True
+
+                else:
+                    guidance_text = ""
+
                 frame_visualizations.append({
                     "type": "data_panel",
-                    "data": {
-                        "状态": "等待盲道识别"
-                    },
+                    "data": {"状态": "等待盲道识别"},
                     "position": (image_width - 180, 20)
                 })
+
             else:
-                guidance_text = self._execute_state_machine(
-                    blind_path_mask, image, frame_visualizations,
-                    image_height, image_width, curr_gray
-                )
+                # ── 偵測到盲道 ──────────────────────────────────────────────
+                if self._no_path_confirmed:
+                    # 從避障模式恢復 → 提示使用者，本幀不執行狀態機（下幀再導航）
+                    guidance_text = "重新找到盲道，恢復導航"
+                    self._no_path_confirmed  = False
+                    self._no_path_start_time = 0.0
+                    self._no_path_warn_count = 0
+                else:
+                    # 正常流程：重置計時器，繼續導航
+                    self._no_path_start_time = 0.0
+                    self._no_path_warn_count = 0
+                    guidance_text = self._execute_state_machine(
+                        blind_path_mask, image, frame_visualizations,
+                        image_height, image_width, curr_gray
+                    )
         
         # 6. 更新缓存
         self.prev_gray = curr_gray
@@ -799,7 +849,13 @@ class BlindPathNavigator:
         
         try:
             min_conf = min(self.CLASS_CONF_THRESHOLDS.values())
-            results = self.yolo_model.predict(image, verbose=False, conf=min_conf, classes=[0, 1])
+            # imgsz=320：比預設 640 快約 3-4 倍，盲道為地面大面積特徵，精度仍足夠
+            # half=True：FP16 半精度推理（GPU 限定），再加速 ~1.5 倍
+            _use_half = torch.cuda.is_available()
+            results = self.yolo_model.predict(
+                image, verbose=False, conf=min_conf, classes=[0, 1],
+                imgsz=320, half=_use_half
+            )
             
             if (results and results[0] and results[0].masks is not None and 
                 results[0].boxes is not None and len(results[0].masks.data) > 0):
@@ -1299,9 +1355,9 @@ class BlindPathNavigator:
         for obs in self.last_detected_obstacles:
             self._add_obstacle_visualization(obs, frame_visualizations)
         
-        # 优先检查近距离障碍物（提高阈值，只有非常近才报警）
-        NEAR_DISTANCE_Y_THRESHOLD = 0.75  # 提高到0.75
-        NEAR_DISTANCE_AREA_THRESHOLD = 0.12  # 提高到0.12
+        # 篩選近距離障礙物（提早預警，讓視障者有足夠反應時間）
+        NEAR_DISTANCE_Y_THRESHOLD = 0.55  # 底部在畫面 55% 以下即警報
+        NEAR_DISTANCE_AREA_THRESHOLD = 0.05  # 佔畫面 5% 以上即警報
         near_obstacles = [
             obs for obs in self.last_detected_obstacles
             if (obs.get('bottom_y_ratio', 0) > NEAR_DISTANCE_Y_THRESHOLD or
@@ -2018,9 +2074,9 @@ class BlindPathNavigator:
             self.pending_obstacle_voice = None
             return
         
-        # 筛选近距离障碍物（提高阈值，只有非常近才报警）
-        NEAR_DISTANCE_Y_THRESHOLD = 0.75  # 提高到0.75，障碍物底部必须在画面下方75%以下
-        NEAR_DISTANCE_AREA_THRESHOLD = 0.12  # 提高到0.12，障碍物必须占画面12%以上
+        # 篩選近距離障礙物（降低門檻，讓更多障礙物觸發提醒）
+        NEAR_DISTANCE_Y_THRESHOLD = 0.55  # 障礙物底部在畫面下方55%以下即觸發
+        NEAR_DISTANCE_AREA_THRESHOLD = 0.05  # 障礙物佔畫面5%以上即觸發
         
         near_obstacles = []
         for obs in obstacles:
@@ -2080,10 +2136,10 @@ class BlindPathNavigator:
         for obs in final_obstacles:
             self._add_obstacle_visualization(obs, frame_visualizations)
         
-        # 筛选近距离障碍物（提高阈值，只有非常近才报警）
-        NEAR_DISTANCE_Y_THRESHOLD = 0.75  # 提高到0.75，障碍物底部必须在画面下方75%以下
-        NEAR_DISTANCE_AREA_THRESHOLD = 0.12  # 提高到0.12，障碍物必须占画面12%以上
-        
+        # 篩選近距離障礙物（提早預警，讓視障者有足夠反應時間）
+        NEAR_DISTANCE_Y_THRESHOLD = 0.55  # 底部在畫面 55% 以下即警報
+        NEAR_DISTANCE_AREA_THRESHOLD = 0.05  # 佔畫面 5% 以上即警報
+
         near_obstacles = [
             obs for obs in final_obstacles
             if (obs.get('bottom_y_ratio', 0) > NEAR_DISTANCE_Y_THRESHOLD or

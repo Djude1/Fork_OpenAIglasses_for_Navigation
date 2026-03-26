@@ -259,7 +259,7 @@ const BASE_PATH = location.pathname.startsWith('/GlassesBackstage') ? '/GlassesB
     setBadge($camStatus, false, 'Camera: connecting…');
     wsCam.binaryType = 'arraybuffer';
     wsCam.onopen  = ()=> setBadge($camStatus, true, 'Camera: connected');
-    wsCam.onclose = ()=> setBadge($camStatus, false, 'Camera: disconnected');
+    wsCam.onclose = ()=>{ setBadge($camStatus, false, 'Camera: disconnected'); setTimeout(connectCamera, 3000); };
     wsCam.onerror = ()=> setBadge($camStatus, false, 'Camera: error');
     wsCam.onmessage = (ev)=> drawBlob(ev.data);
   }
@@ -270,7 +270,7 @@ const BASE_PATH = location.pathname.startsWith('/GlassesBackstage') ? '/GlassesB
     wsUI = new WebSocket(`${proto}://${location.host}${BASE_PATH}/ws_ui`);
     setBadge($asrStatus, false, 'ASR: connecting…');
     wsUI.onopen  = ()=> setBadge($asrStatus, true, 'ASR: connected');
-    wsUI.onclose = ()=> setBadge($asrStatus, false, 'ASR: disconnected');
+    wsUI.onclose = ()=>{ setBadge($asrStatus, false, 'ASR: disconnected'); setTimeout(connectASR, 3000); };
     wsUI.onerror = ()=> setBadge($asrStatus, false, 'ASR: error');
     wsUI.onmessage = (ev)=>{
       const s = ev.data || '';
@@ -630,7 +630,7 @@ import { GLTFLoader } from 'https://unpkg.com/three@0.155.0/examples/jsm/loaders
   let glassModel = null;
   const loader = new GLTFLoader();
   loader.load(
-    '/static/models/aiglass.glb',
+    BASE_PATH + '/static/models/aiglass.glb',
     (gltf) => {
       glassModel = gltf.scene;
       glassModel.scale.set(2, 2, 2);

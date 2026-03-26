@@ -2,7 +2,8 @@ from rest_framework import serializers
 from .models import (
     SiteSettings, HomeContent, ProductPageContent,
     DownloadPageContent, DownloadFeature, DownloadStep,
-    PurchasePageContent, TeamPageContent,
+    PurchasePageContent, TeamPageContent, AppServerConfig,
+    ImpactFeedback, AppAnnouncement,
 )
 
 
@@ -61,3 +62,24 @@ class TeamPageContentSerializer(serializers.ModelSerializer):
     class Meta:
         model = TeamPageContent
         exclude = ('id',)
+
+
+class AppServerConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AppServerConfig
+        exclude = ('id',)
+
+
+class ImpactFeedbackSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = ImpactFeedback
+        fields = ('id', 'magnitude', 'outcome', 'is_false_positive', 'note', 'created_at')
+
+
+class AppAnnouncementSerializer(serializers.ModelSerializer):
+    type_display = serializers.CharField(source='get_type_display', read_only=True)
+
+    class Meta:
+        model  = AppAnnouncement
+        fields = ('id', 'title', 'body', 'type', 'type_display',
+                  'is_active', 'scheduled_at', 'created_at', 'updated_at')

@@ -4,13 +4,13 @@ import os, sys, time, json, asyncio, base64, audioop
 from typing import Any, Dict, Optional, Tuple, List, Callable, Set, Deque
 from collections import deque
 import re
-import auth  # 使用者認證與管理模組
 from qwen_extractor import extract_english_label
 from navigation_master import NavigationMaster, OrchestratorResult
 from workflow_blindpath import BlindPathNavigator
 from workflow_crossstreet import CrossStreetNavigator
 import torch
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from pydantic import BaseModel
 from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketState
@@ -51,7 +51,7 @@ from audio_stream import (
     is_playing_now,
     current_ai_task,
 )
-from omni_client import stream_chat, OmniStreamPiece
+from omni_client import stream_chat, OmniStreamPiece, generate_text_async
 from asr_core import (
     ASRCallback,
     GroqASR,    # 保留備用
@@ -117,6 +117,11 @@ _VERIFY_CONTINUOUS_SEC:    float     = 2.0     # 每幾秒做一次驗證
 # ── Speaker 聲紋事件 SSE 廣播隊列 ────────────────────────────────────────────
 _speaker_sse_queues: list = []  # 每個 SSE 客戶端一個 asyncio.Queue
 _last_rms_push_ts:   float = 0.0  # 限制 RMS 推送頻率（每 0.15 秒一次）
+
+# ── Debug 錄音（收音品質排查）────────────────────────────────────────────────
+_debug_rec_active: bool      = False   # 是否正在錄音
+_debug_rec_buffer: bytearray = bytearray()  # 收音緩衝
+_DEBUG_REC_DIR:    str       = r"D:\GitHub_Project\Fork_OpenAIglasses_for_Navigation\錄音測試"
 
 # 【新增】盲道导航相关全局变量
 blind_path_navigator = None
@@ -284,6 +289,10 @@ yolomedia_stop_event = threading.Event()
 yolomedia_running = False
 yolomedia_sending_frames = False  # 新增：标记YOLO是否已经开始发送处理后的帧
 
+# 方位播報模式："clock"（時鐘，預設）或 "cardinal"（前後左右）
+# 使用者可在 APP 設定頁切換，透過 /api/settings/position_mode 儲存
+_position_mode: str = "clock"
+
 # 物品名称到YOLO类别的映射
 ITEM_TO_CLASS_MAP = {
     "红牛": "Red_Bull",
@@ -363,34 +372,40 @@ async def full_system_reset(reason: str = ""):
     print("[SYSTEM] full reset done.", flush=True)
 
 # ========= 启动/停止 YOLO 媒体处理 =========
-def start_yolomedia_with_target(target_name: str):
+def start_yolomedia_with_target(target_name: str, position_mode: str = "clock"):
     """启动yolomedia线程，搜索指定物品"""
     global yolomedia_thread, yolomedia_stop_event, yolomedia_running, yolomedia_sending_frames
-    
+
     # 如果已经在运行，先停止
     if yolomedia_running:
         stop_yolomedia()
-    
+
     # 查找对应的YOLO类别
     yolo_class = ITEM_TO_CLASS_MAP.get(target_name, target_name)
     print(f"[YOLOMEDIA] Starting with target: {target_name} -> YOLO class: {yolo_class}", flush=True)
-    print(f"[YOLOMEDIA] Available mappings: {ITEM_TO_CLASS_MAP}", flush=True)  # 添加这行调试
-    
+    print(f"[YOLOMEDIA] Available mappings: {ITEM_TO_CLASS_MAP}", flush=True)
+    print(f"[YOLOMEDIA] position_mode: {position_mode}", flush=True)
+
     yolomedia_stop_event.clear()
     yolomedia_running = True
     yolomedia_sending_frames = False  # 重置发送帧状态
-    
+
     def _run():
         try:
-            # 传递目标类别名和停止事件
-            yolomedia.main(headless=True, prompt_name=yolo_class, stop_event=yolomedia_stop_event)
+            # 傳遞目標類別名、停止事件與方位模式
+            yolomedia.main(
+                headless=True,
+                prompt_name=yolo_class,
+                stop_event=yolomedia_stop_event,
+                position_mode=position_mode,
+            )
         except Exception as e:
             print(f"[YOLOMEDIA] worker stopped: {e}", flush=True)
         finally:
             global yolomedia_running, yolomedia_sending_frames
             yolomedia_running = False
             yolomedia_sending_frames = False
-    
+
     yolomedia_thread = threading.Thread(target=_run, daemon=True)
     yolomedia_thread.start()
     print(f"[YOLOMEDIA] background worker started for: {yolo_class}（正在初始化，暂时显示原始画面）", flush=True)
@@ -463,12 +478,13 @@ async def start_ai_with_text_custom(user_text: str):
             # 播放启动语音并广播到UI
             play_voice_text("过马路模式已启动。")
             await ui_broadcast_final("[系统] 过马路模式已启动")
+            await ui_broadcast_raw(f"NAV_STATE:{orchestrator.get_state()}")
         else:
             print("[CROSS_STREET] 警告：导航统领器未初始化！")
             play_voice_text("启动过马路模式失败，请稍后重试。")
             await ui_broadcast_final("[系统] 导航系统未就绪")
         return
-    
+
     if "过马路结束" in user_text or "结束过马路" in user_text or \
        "過馬路結束" in user_text or "結束過馬路" in user_text:
         if orchestrator:
@@ -477,8 +493,8 @@ async def start_ai_with_text_custom(user_text: str):
             # 播放停止语音并广播到UI
             play_voice_text("已停止导航。")
             await ui_broadcast_final("[系统] 过马路模式已停止")
-        else:
-            await ui_broadcast_final("[系统] 导航系统未运行")
+            await ui_broadcast_raw(f"NAV_STATE:{orchestrator.get_state()}")
+        # else: orchestrator 未初始化，靜默返回
         return
     
     # 【修改】检查是否是红绿灯检测命令 - 实现与盲道导航互斥
@@ -498,13 +514,15 @@ async def start_ai_with_text_custom(user_text: str):
             
             if success:
                 await ui_broadcast_final("[系统] 红绿灯检测已启动")
+                if orchestrator:
+                    await ui_broadcast_raw(f"NAV_STATE:{orchestrator.get_state()}")
             else:
                 await ui_broadcast_final("[系统] 红绿灯模型加载失败")
         except Exception as e:
             print(f"[TRAFFIC] 启动红绿灯检测失败: {e}")
             await ui_broadcast_final(f"[系统] 启动失败: {e}")
         return
-    
+
     if "停止检测" in user_text or "停止红绿灯" in user_text or \
        "停止檢測" in user_text or "停止紅綠燈" in user_text:
         try:
@@ -512,7 +530,8 @@ async def start_ai_with_text_custom(user_text: str):
             if orchestrator:
                 orchestrator.stop_navigation()  # 回到CHAT模式
                 print(f"[TRAFFIC] 红绿灯检测停止，恢复到{orchestrator.get_state()}模式")
-            
+                await ui_broadcast_raw(f"NAV_STATE:{orchestrator.get_state()}")
+
             await ui_broadcast_final("[系统] 红绿灯检测已停止")
         except Exception as e:
             print(f"[TRAFFIC] 停止红绿灯检测失败: {e}")
@@ -530,20 +549,24 @@ async def start_ai_with_text_custom(user_text: str):
         if orchestrator:
             orchestrator.start_blind_path_navigation()
             print(f"[NAVIGATION] 盲道导航已启动，状态: {orchestrator.get_state()}")
+            # 播放啟動語音並廣播到 UI
+            play_voice_text("盲道導航已開始。")
             await ui_broadcast_final("[系统] 盲道导航已启动")
+            await ui_broadcast_raw(f"NAV_STATE:{orchestrator.get_state()}")
         else:
             print("[NAVIGATION] 警告：导航统领器未初始化！")
+            play_voice_text("導航系統尚未就緒，請稍後重試。")
             await ui_broadcast_final("[系统] 导航系统未就绪")
         return
-    
+
     if "停止导航" in user_text or "结束导航" in user_text or \
        "停止導航" in user_text or "結束導航" in user_text:
         if orchestrator:
             orchestrator.stop_navigation()
             print(f"[NAVIGATION] 导航已停止，状态: {orchestrator.get_state()}")
             await ui_broadcast_final("[系统] 盲道导航已停止")
-        else:
-            await ui_broadcast_final("[系统] 导航系统未运行")
+            await ui_broadcast_raw(f"NAV_STATE:{orchestrator.get_state()}")
+        # else: orchestrator 未初始化，導航本就未運行，靜默返回（不廣播雜訊）
         return
 
     nav_cmd_keywords = ["开始过马路", "过马路结束", "开始导航", "盲道导航", "停止导航", "结束导航", "立即通过", "现在通过", "继续",
@@ -552,6 +575,7 @@ async def start_ai_with_text_custom(user_text: str):
         if orchestrator:
             orchestrator.on_voice_command(user_text)
             await ui_broadcast_final("[系统] 导航模式已更新")
+            await ui_broadcast_raw(f"NAV_STATE:{orchestrator.get_state()}")
         else:
             await ui_broadcast_final("[系统] 导航统领器未初始化")
         return    
@@ -573,9 +597,10 @@ async def start_ai_with_text_custom(user_text: str):
             if orchestrator:
                 orchestrator.start_item_search()
                 print(f"[ITEM_SEARCH] 已切换到找物品模式，状态: {orchestrator.get_state()}")
+                await ui_broadcast_raw(f"NAV_STATE:{orchestrator.get_state()}")
             
             # 【关键】把英文类名传给 yolomedia（它会在找不到类时自动切 YOLOE）
-            start_yolomedia_with_target(label_en)
+            start_yolomedia_with_target(label_en, position_mode=_position_mode)
 
             # 给前端/语音来个确认反馈
             try:
@@ -596,7 +621,8 @@ async def start_ai_with_text_custom(user_text: str):
             orchestrator.stop_item_search(restore_nav=True)
             current_state = orchestrator.get_state()
             print(f"[ITEM_SEARCH] 找物品结束，当前状态: {current_state}")
-            
+            await ui_broadcast_raw(f"NAV_STATE:{current_state}")
+
             # 根据恢复的状态给出反馈
             if current_state in ["BLINDPATH_NAV", "SEEKING_CROSSWALK", "WAIT_TRAFFIC_LIGHT", "CROSSING", "SEEKING_NEXT_BLINDPATH"]:
                 await ui_broadcast_final("[找物品] 已找到物品，继续导航。")
@@ -658,16 +684,26 @@ async def start_ai_with_text(user_text: str):
         txt_buf: List[str] = []
         rate_state = None
 
-        # 组装（图像+文本）
+        # 組裝（多幀圖像 + 文本）
+        # 從 last_frames 取最多 3 幀（平均分佈），讓 Gemini 有時間序列上下文
         content_list = []
         if last_frames:
             try:
-                _, jpeg_bytes = last_frames[-1]
-                img_b64 = base64.b64encode(jpeg_bytes).decode("ascii")
-                content_list.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
-                })
+                frames = list(last_frames)  # deque → list（索引 0 最舊，-1 最新）
+                n = len(frames)
+                if n >= 3:
+                    indices = [0, n // 2, n - 1]
+                elif n == 2:
+                    indices = [0, 1]
+                else:
+                    indices = [0]
+                for idx in indices:
+                    _, jpeg_bytes = frames[idx]
+                    img_b64 = base64.b64encode(jpeg_bytes).decode("ascii")
+                    content_list.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
+                    })
             except Exception:
                 pass
         content_list.append({"type": "text", "text": user_text})
@@ -954,6 +990,46 @@ async def speaker_events(request: Request):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
+# ── Debug 錄音 API ────────────────────────────────────────────────────────────
+
+@app.post("/api/debug_record/start")
+async def debug_record_start():
+    """開始 Debug 錄音（收音進 _debug_rec_buffer，直到呼叫 stop）"""
+    global _debug_rec_active, _debug_rec_buffer
+    _debug_rec_buffer = bytearray()
+    _debug_rec_active = True
+    print("[DEBUG_REC] 開始錄音", flush=True)
+    return {"status": "recording"}
+
+@app.post("/api/debug_record/stop")
+async def debug_record_stop():
+    """停止 Debug 錄音並儲存為 WAV 檔案"""
+    global _debug_rec_active, _debug_rec_buffer
+    _debug_rec_active = False
+
+    if not _debug_rec_buffer:
+        return {"status": "error", "msg": "無收音資料"}
+
+    import wave, os
+    from datetime import datetime
+
+    os.makedirs(_DEBUG_REC_DIR, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = os.path.join(_DEBUG_REC_DIR, f"debug_{ts}.wav")
+
+    pcm_data = bytes(_debug_rec_buffer)
+    _debug_rec_buffer = bytearray()
+
+    with wave.open(filepath, "wb") as wf:
+        wf.setnchannels(1)        # 單聲道
+        wf.setsampwidth(2)        # 16-bit PCM
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(pcm_data)
+
+    duration = len(pcm_data) / (SAMPLE_RATE * 2)
+    print(f"[DEBUG_REC] 已儲存 {filepath}（{duration:.1f} 秒）", flush=True)
+    return {"status": "saved", "file": filepath, "duration_sec": round(duration, 1)}
+
 # 注册 /stream.wav
 register_stream_route(app)
 
@@ -1080,6 +1156,11 @@ async def ws_audio(ws: WebSocket):
 
             elif "bytes" in msg and msg["bytes"] is not None:
                 raw_bytes = msg["bytes"]
+
+                # ── Debug 錄音：同時捕捉音訊（不阻礙 ASR）──────────────────
+                global _debug_rec_active, _debug_rec_buffer
+                if _debug_rec_active:
+                    _debug_rec_buffer.extend(raw_bytes)
 
                 # ── 說話人聲紋錄製（同時收音，不阻礙 ASR）──────────────────
                 global _enroll_active, _enroll_buffer, _enroll_end_ts
@@ -1229,9 +1310,9 @@ async def ws_camera_esp(ws: WebSocket):
     # 連線後送畫質/幀率指令，降低 2.4GHz 頻寬壓力
     await asyncio.sleep(0.5)
     try:
-        await ws.send_text("SET:QUALITY=25")  # 畫質 17→25，幀大小縮小約 40%
-        await ws.send_text("SET:FPS=10")      # 限制 10fps，減少傳輸量
-        print("[CAMERA] 已送出畫質/幀率限制指令（quality=25, fps=10）", flush=True)
+        await ws.send_text("SET:QUALITY=15")  # 畫質 15：縮小傳輸量，YOLO imgsz=320 精度已足夠
+        await ws.send_text("SET:FPS=20")      # 20fps：幀間隔 50ms，降低等幀延遲
+        print("[CAMERA] 已送出畫質/幀率限制指令（quality=15, fps=20）", flush=True)
     except Exception:
         pass
 
@@ -1296,7 +1377,31 @@ async def ws_camera_esp(ws: WebSocket):
                 
                 # 推送到bridge_io（供yolomedia使用）
                 bridge_io.push_raw_jpeg(data)
-                
+
+                # 【速度優化】清空積壓幀：上一輪 YOLO 推理期間 WebSocket 積壓的舊幀
+                # 全部推給 bridge_io / recorder，但導航推理只用最新一幀
+                while True:
+                    try:
+                        _fm = await asyncio.wait_for(ws.receive(), timeout=0.001)
+                        _t  = _fm.get('type', '')
+                        if _t in ('websocket.disconnect', 'websocket.close'):
+                            raise WebSocketDisconnect()
+                        _fd = _fm.get('bytes')
+                        if _fd:
+                            frame_counter += 1
+                            try: sync_recorder.record_frame(_fd)
+                            except Exception: pass
+                            try: last_frames.append((time.time(), _fd))
+                            except Exception: pass
+                            bridge_io.push_raw_jpeg(_fd)
+                            data = _fd  # 丟棄舊幀，保留最新
+                    except asyncio.TimeoutError:
+                        break
+                    except WebSocketDisconnect:
+                        raise
+                    except Exception:
+                        break
+
                 # 【调试】检查导航条件
                 if frame_counter % 30 == 0:  # 每30帧输出一次
                     state_dbg = orchestrator.get_state() if orchestrator else "N/A"
@@ -1608,12 +1713,6 @@ class UDPProto(asyncio.DatagramProtocol):
 
 
 
-# === 初始化使用者認證資料庫 ===
-@app.on_event("startup")
-async def on_startup_auth():
-    auth.init_db()
-
-
 # === UDP 廣播：讓 App 自動發現伺服器 IP ===
 @app.on_event("startup")
 async def on_startup_udp_broadcast():
@@ -1891,177 +1990,63 @@ def get_camera_ws():
     return esp32_camera_ws
 
 
-# ============================================================
-# Android App API：使用者認證、導航控制、緊急連絡人
-# ============================================================
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
+# ── 文件閱讀端點 ──────────────────────────────────────────────────────────────
 
-_bearer = HTTPBearer(auto_error=False)
+class ReadDocumentRequest(BaseModel):
+    image_b64: str   # base64 JPEG / PNG，由 APP 手機鏡頭拍攝
 
 
-def _require_token(
-    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
-) -> dict:
-    """驗證 Bearer token，回傳 payload；失敗拋出 401"""
-    if not creds:
-        raise HTTPException(status_code=401, detail="缺少 Authorization header")
-    payload = auth.verify_token(creds.credentials)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Token 無效或已過期")
-    return payload
+class ExplainDocumentRequest(BaseModel):
+    text:     str    # 先前 OCR 取得的文件全文
+    question: str    # 使用者問題（首次說明 / 追問）
 
 
-def _require_admin(payload: dict = Depends(_require_token)) -> dict:
-    """只允許 admin 角色"""
-    if payload.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="需要管理員權限")
-    return payload
+@app.post("/api/read_document")
+async def api_read_document(req: ReadDocumentRequest):
+    """
+    使用 Gemini Vision 完整擷取圖片中的所有文字。
+    回傳 { text, char_count }
+    """
+    system = (
+        "你是一位專業的文件辨識助理，協助視障者閱讀紙本文件。"
+        "請完整、逐字擷取圖片中的所有文字，保留段落與換行結構，"
+        "不要省略、不要摘要、不要加入你自己的評論。"
+        "若圖片中沒有可讀的文字，僅回覆：【圖片中未發現文字】。"
+    )
+    content_list = [
+        {"type": "image_url",
+         "image_url": {"url": f"data:image/jpeg;base64,{req.image_b64}"}},
+        {"type": "text",
+         "text": "請完整擷取此圖片中的所有文字，保留原有排版與段落。"},
+    ]
+    text = await generate_text_async(content_list, system_prompt=system, max_tokens=8192)
+    return {"text": text, "char_count": len(text)}
 
 
-# ── 認證端點 ──────────────────────────────────────────────────────────────────
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-@app.post("/api/login")
-def api_login(req: LoginRequest):
-    result = auth.login(req.username, req.password)
-    if not result:
-        raise HTTPException(status_code=401, detail="帳號或密碼錯誤")
-    return result
-
-
-@app.get("/api/me")
-def api_me(payload: dict = Depends(_require_token)):
-    user = auth.get_user(int(payload["sub"]))
-    if not user:
-        raise HTTPException(status_code=404, detail="使用者不存在")
-    return user
-
-
-class ChangePasswordRequest(BaseModel):
-    old_password: str
-    new_password: str
-
-
-@app.post("/api/me/password")
-def api_change_password(req: ChangePasswordRequest,
-                        payload: dict = Depends(_require_token)):
-    result = auth.change_own_password(int(payload["sub"]),
-                                      req.old_password, req.new_password)
-    if not result["ok"]:
-        raise HTTPException(status_code=400, detail=result.get("error"))
-    return result
-
-
-# ── 使用者管理（Admin Only）────────────────────────────────────────────────────
-
-@app.get("/api/users")
-def api_list_users(payload: dict = Depends(_require_admin)):
-    return auth.list_users()
-
-
-class CreateUserRequest(BaseModel):
-    username: str
-    password: str
-    role: str = "user"
-
-
-@app.post("/api/users")
-def api_create_user(req: CreateUserRequest,
-                    payload: dict = Depends(_require_admin)):
-    result = auth.create_user(req.username, req.password, req.role)
-    if not result["ok"]:
-        raise HTTPException(status_code=400, detail=result.get("error"))
-    return result
-
-
-class UpdateUserRequest(BaseModel):
-    role:     Optional[str]  = None
-    enabled:  Optional[bool] = None
-    password: Optional[str]  = None
-
-
-@app.put("/api/users/{user_id}")
-def api_update_user(user_id: int, req: UpdateUserRequest,
-                    payload: dict = Depends(_require_admin)):
-    return auth.update_user(user_id, req.role, req.enabled, req.password)
-
-
-@app.delete("/api/users/{user_id}")
-def api_delete_user(user_id: int, payload: dict = Depends(_require_admin)):
-    if str(user_id) == payload["sub"]:
-        raise HTTPException(status_code=400, detail="不能刪除自己")
-    return auth.delete_user(user_id)
-
-
-# ── 緊急連絡人（每位使用者管理自己的）────────────────────────────────────────
-
-@app.get("/api/contacts")
-def api_list_contacts(payload: dict = Depends(_require_token)):
-    return auth.list_contacts(int(payload["sub"]))
-
-
-class ContactRequest(BaseModel):
-    name:  str
-    phone: str
-
-
-@app.post("/api/contacts")
-def api_add_contact(req: ContactRequest,
-                    payload: dict = Depends(_require_token)):
-    return auth.add_contact(int(payload["sub"]), req.name, req.phone)
-
-
-@app.put("/api/contacts/{contact_id}")
-def api_update_contact(contact_id: int, req: ContactRequest,
-                       payload: dict = Depends(_require_token)):
-    return auth.update_contact(contact_id, int(payload["sub"]),
-                               req.name, req.phone)
-
-
-@app.delete("/api/contacts/{contact_id}")
-def api_delete_contact(contact_id: int,
-                       payload: dict = Depends(_require_token)):
-    return auth.delete_contact(contact_id, int(payload["sub"]))
-
-
-# ── 管理員級別連絡人端點（Website 後台用，可操作任意用戶）──────────────────
-
-@app.get("/api/admin/users/{user_id}/contacts")
-def api_admin_list_contacts(user_id: int,
-                            payload: dict = Depends(_require_admin)):
-    return auth.list_contacts(user_id)
-
-
-@app.post("/api/admin/users/{user_id}/contacts")
-def api_admin_add_contact(user_id: int, req: ContactRequest,
-                          payload: dict = Depends(_require_admin)):
-    return auth.add_contact(user_id, req.name, req.phone)
-
-
-@app.put("/api/admin/contacts/{contact_id}")
-def api_admin_update_contact(contact_id: int, req: ContactRequest,
-                             user_id: int,
-                             payload: dict = Depends(_require_admin)):
-    return auth.update_contact(contact_id, user_id, req.name, req.phone)
-
-
-@app.delete("/api/admin/contacts/{contact_id}")
-def api_admin_delete_contact(contact_id: int,
-                             user_id: int,
-                             payload: dict = Depends(_require_admin)):
-    return auth.delete_contact(contact_id, user_id)
+@app.post("/api/explain_document")
+async def api_explain_document(req: ExplainDocumentRequest):
+    """
+    根據 OCR 文件全文回答使用者問題（說明重點 / 追問）。
+    回傳 { answer }
+    """
+    system = (
+        "你是一位貼心的文件說明助理，協助視障者理解文件內容。"
+        "根據使用者提供的文件原文，用清晰、口語化的繁體中文回答問題。"
+        "若回答較長，請用條列或分段，讓視障者聆聽時容易理解。"
+    )
+    content_list = [
+        {"type": "text",
+         "text": f"以下是文件全文：\n\n{req.text}\n\n使用者問題：{req.question}"},
+    ]
+    answer = await generate_text_async(content_list, system_prompt=system, max_tokens=2048)
+    return {"answer": answer}
 
 
 # ── 導航控制端點（operator 以上可使用）───────────────────────────────────────
 
 class ItemSearchRequest(BaseModel):
     item_name: str = ""
+    position_mode: str = "clock"   # "clock"（時鐘）或 "cardinal"（前後左右）
 
 
 @app.post("/api/nav/blindpath")
@@ -2088,9 +2073,33 @@ async def api_nav_traffic_light():
 @app.post("/api/nav/item_search")
 async def api_nav_item_search(req: ItemSearchRequest):
     """啟動物品尋找（不需登入）"""
+    global _position_mode
+    # 儲存使用者本次選擇的方位模式
+    if req.position_mode in ("clock", "cardinal"):
+        _position_mode = req.position_mode
     text = f"幫我找{req.item_name}" if req.item_name else "幫我找東西"
     await start_ai_with_text_custom(text)
     return {"ok": True, "state": orchestrator.get_state() if orchestrator else "unavailable"}
+
+
+class PositionModeRequest(BaseModel):
+    mode: str  # "clock" 或 "cardinal"
+
+
+@app.post("/api/settings/position_mode")
+async def api_set_position_mode(req: PositionModeRequest):
+    """設定方位播報模式（不需登入，即時生效）"""
+    global _position_mode
+    if req.mode not in ("clock", "cardinal"):
+        return {"ok": False, "error": "mode 必須是 clock 或 cardinal"}
+    _position_mode = req.mode
+    return {"ok": True, "mode": _position_mode}
+
+
+@app.get("/api/settings/position_mode")
+async def api_get_position_mode():
+    """取得目前方位播報模式"""
+    return {"mode": _position_mode}
 
 
 @app.post("/api/nav/stop")
@@ -2103,9 +2112,10 @@ async def api_nav_stop():
 @app.get("/api/nav/state")
 def api_nav_state():
     """查詢目前導航狀態（不需登入）"""
-    state = orchestrator.get_state() if orchestrator else "unavailable"
+    # orchestrator 未初始化時回傳 IDLE（而非 unavailable）
+    # 避免 APP 端把 "unavailable" 誤判為導航中而無法停止
+    state = orchestrator.get_state() if orchestrator else "IDLE"
     return {"state": state}
-
 
 if __name__ == "__main__":
     uvicorn.run(

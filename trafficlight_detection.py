@@ -196,9 +196,9 @@ def main(headless: bool = True, stop_event=None):
         model = YOLO(YOLO_MODEL_PATH)
         if torch.cuda.is_available():
             model.to("cuda")
-            print(f"[TRAFFIC] 模型加载成功並放到GPU: {YOLO_MODEL_PATH}")
+            print(f"[TRAFFIC] 模型加载成功（GPU）: {YOLO_MODEL_PATH}")
         else:
-            print(f"[TRAFFIC] 模型加载成功（CUDA不可用，使用CPU）: {YOLO_MODEL_PATH}")
+            print(f"[TRAFFIC] 模型加载成功（CPU，CUDA 不可用）: {YOLO_MODEL_PATH}")
     except Exception as e:
         print(f"[TRAFFIC] 模型加载失败: {e}")
         return
@@ -491,9 +491,9 @@ def init_model():
         _model = YOLO(YOLO_MODEL_PATH)
         if torch.cuda.is_available():
             _model.to("cuda")
-            print(f"[TRAFFIC] 模型加载成功並放到GPU: {YOLO_MODEL_PATH}")
+            print(f"[TRAFFIC] 模型加载成功（GPU）: {YOLO_MODEL_PATH}")
         else:
-            print(f"[TRAFFIC] 模型加载成功（CUDA不可用，使用CPU）: {YOLO_MODEL_PATH}")
+            print(f"[TRAFFIC] 模型加载成功（CPU，CUDA 不可用）: {YOLO_MODEL_PATH}")
         class_names = _model.names if hasattr(_model, 'names') else {}
         print(f"[TRAFFIC] 模型类别: {class_names}")
         return True
