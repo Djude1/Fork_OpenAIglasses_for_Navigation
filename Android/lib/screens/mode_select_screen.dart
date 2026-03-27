@@ -17,11 +17,24 @@ class ModeSelectScreen extends StatefulWidget {
 
 class _ModeSelectScreenState extends State<ModeSelectScreen> {
   final FlutterTts _tts = FlutterTts();
+  bool _isDevMode = false;
 
   @override
   void initState() {
     super.initState();
     _initTts();
+    _checkDevMode();
+  }
+
+  Future<void> _checkDevMode() async {
+    try {
+      const channel = MethodChannel('com.aiglasses/app_control');
+      final result = await channel.invokeMethod<bool>('isDeveloperMode');
+      debugPrint('[ModeSelect] isDeveloperMode = $result');
+      if (mounted) setState(() => _isDevMode = result ?? false);
+    } catch (e) {
+      debugPrint('[ModeSelect] _checkDevMode 失敗: $e');
+    }
   }
 
   Future<void> _initTts() async {
@@ -147,57 +160,58 @@ class _ModeSelectScreenState extends State<ModeSelectScreen> {
                 ),
               ),
 
-              const SizedBox(height: 16),
-
-              // ── 開發者模式（較小按鈕）─────────────────────────────────────
-              Expanded(
-                flex: 1,
-                child: Semantics(
-                  label: '開發者模式：顯示詳細導航資訊與設定，點擊選擇',
-                  button: true,
-                  child: GestureDetector(
-                    onTap: () => _selectMode('developer'),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF37474F),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.developer_mode,
-                            size: 36,
-                            color: Colors.white70,
-                          ),
-                          SizedBox(width: 14),
-                          Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '開發者模式',
-                                style: TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
+              // ── 開發者模式（僅手機開啟開發人員選項時顯示）──────────
+              if (_isDevMode) ...[
+                const SizedBox(height: 16),
+                Expanded(
+                  flex: 1,
+                  child: Semantics(
+                    label: '開發者模式：顯示詳細導航資訊與設定，點擊選擇',
+                    button: true,
+                    child: GestureDetector(
+                      onTap: () => _selectMode('developer'),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF37474F),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.developer_mode,
+                              size: 36,
+                              color: Colors.white70,
+                            ),
+                            SizedBox(width: 14),
+                            Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '開發者模式',
+                                  style: TextStyle(
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
                                 ),
-                              ),
-                              Text(
-                                '顯示詳細資訊、AR 畫面與後台管理',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.white54,
+                                Text(
+                                  '顯示詳細資訊、AR 畫面與後台管理',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.white54,
+                                  ),
                                 ),
-                              ),
-                            ],
-                          ),
-                        ],
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
+              ],
 
               const SizedBox(height: 16),
             ],

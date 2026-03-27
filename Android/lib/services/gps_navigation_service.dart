@@ -1,9 +1,15 @@
 // lib/services/gps_navigation_service.dart
 // GPS 導航服務：背景監測與目的地距離，到達時自動結束
 // 配合 Google Maps 背景語音導航 + 前景避障模式使用
+//
+// 設計原則：
+// - Google Maps 在背景提供語音路線引導
+// - 我們的 APP 保持前景，使用者不會被切走
+// - GPS 距離監測獨立於避障功能，兩者可獨立控制
 
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -40,8 +46,9 @@ class GpsNavigationService {
   Timer? _timeoutTimer;
 
   /// 啟動 GPS 導航
-  /// 1. 開啟 Google Maps 背景步行導航（Intent 帶座標，自動開始）
-  /// 2. 啟動 GPS 位置監測，持續計算與目的地距離
+  /// 1. 先啟動 GPS 位置監測
+  /// 2. 背景開啟 Google Maps 步行導航（自動語音引導）
+  /// 3. 延遲切回我們的 APP，讓使用者留在前景
   Future<bool> startNavigation({
     required double latitude,
     required double longitude,
@@ -61,28 +68,7 @@ class GpsNavigationService {
     _state = GpsNavState.navigating;
     _lastDistance = double.infinity;
 
-    // ── 啟動 Google Maps 步行導航（背景）──
-    final gmapsUrl = Uri.parse(
-      'google.navigation:q=$latitude,$longitude&mode=w',
-    );
-    try {
-      final launched = await launchUrl(
-        gmapsUrl,
-        mode: LaunchMode.externalApplication,
-      );
-      if (!launched) {
-        // Google Maps 未安裝，改用瀏覽器版
-        final webUrl = Uri.parse(
-          'https://www.google.com/maps/dir/?api=1&destination=$latitude,$longitude&travelmode=walking',
-        );
-        await launchUrl(webUrl, mode: LaunchMode.externalApplication);
-      }
-      debugPrint('[GPS] Google Maps 步行導航已啟動: $name ($latitude, $longitude)');
-    } catch (e) {
-      debugPrint('[GPS] 啟動 Google Maps 失敗: $e');
-    }
-
-    // ── 啟動 GPS 位置監測 ──
+    // ── 1. 先啟動 GPS 位置監測 ──
     try {
       _positionSub = Geolocator.getPositionStream(
         locationSettings: const LocationSettings(
@@ -100,10 +86,57 @@ class GpsNavigationService {
       });
 
       debugPrint('[GPS] GPS 位置監測已啟動');
-      return true;
     } catch (e) {
       debugPrint('[GPS] 啟動位置監測失敗: $e');
       return false;
+    }
+
+    // ── 2. 背景啟動 Google Maps（會短暫跳轉，之後切回）──
+    _launchGoogleMapsBackground(latitude, longitude, name);
+
+    return true;
+  }
+
+  /// 背景啟動 Google Maps 並自動切回 APP
+  Future<void> _launchGoogleMapsBackground(
+    double lat, double lng, String name,
+  ) async {
+    final gmapsUrl = Uri.parse(
+      'google.navigation:q=$lat,$lng&mode=w',
+    );
+    try {
+      final launched = await launchUrl(
+        gmapsUrl,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched) {
+        debugPrint('[GPS] Google Maps 未安裝，跳過背景語音導航');
+        return;
+      }
+      debugPrint('[GPS] Google Maps 步行導航已啟動: $name ($lat, $lng)');
+
+      // 延遲 1.5 秒後切回我們的 APP
+      // Google Maps 會在背景繼續語音導航
+      await Future.delayed(const Duration(milliseconds: 1500));
+      await _bringAppToForeground();
+    } catch (e) {
+      debugPrint('[GPS] 啟動 Google Maps 失敗: $e');
+    }
+  }
+
+  /// 將我們的 APP 切回前景
+  /// 使用 Android 的 moveTaskToFront 或簡單地用 SystemNavigator
+  Future<void> _bringAppToForeground() async {
+    try {
+      // 使用 Android Intent 把自己拉回前景
+      // 透過 MethodChannel 呼叫原生 Android 端
+      const channel = MethodChannel('com.aiglasses/app_control');
+      await channel.invokeMethod('bringToForeground');
+      debugPrint('[GPS] 已切回 APP 前景');
+    } catch (e) {
+      debugPrint('[GPS] 切回前景失敗（可能需要原生端支援）: $e');
+      // 備用方案：不做任何事，使用者可以手動切回
+      // 至少 Google Maps 已在背景運行語音導航
     }
   }
 

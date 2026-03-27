@@ -172,13 +172,14 @@ class _BlindScreenState extends State<BlindScreen>
   void _announce(String text) =>
       context.read<AppProvider>().speak(text);
 
-  // ── 導航按鈕邏輯 ────────────────────────────────────────────────────────
+  // ── 導航按鈕邏輯（GPS 導航）────────────────────────────────────────────
   Future<void> _doNavAction() async {
     HapticFeedback.heavyImpact();
     final app = context.read<AppProvider>();
     if (!app.connected) { _announce('伺服器未連線，請稍候'); return; }
-    if (_isNavigating(app.navState)) {
-      await app.stopNavigation();
+    if (app.gpsNavActive) {
+      // GPS 導航進行中 → 只停 GPS，保留避障
+      await app.stopGpsNavigation();
     } else {
       // 進入目的地選擇畫面
       if (mounted) {
@@ -187,28 +188,22 @@ class _BlindScreenState extends State<BlindScreen>
     }
   }
 
-  // ── 避障功能（原盲道導航）─────────────────────────────────────────────────
+  // ── 避障功能（獨立於 GPS 導航）──────────────────────────────────────────
   Future<void> _doObstacleAvoidance() async {
     HapticFeedback.heavyImpact();
     final app = context.read<AppProvider>();
     if (!app.connected) { _announce('伺服器未連線，請稍候'); return; }
     if (_isNavigating(app.navState)) {
-      await app.stopNavigation();
+      // 伺服器端有避障在跑 → 停止避障
+      await app.stopObstacleAvoidance();
     } else {
       await app.startBlindpath();
     }
   }
 
-  // ── 手動緊急求救：跳出選人畫面 ──────────────────────────────────────────
+  // ── 手動緊急求救：固定顯示兩位聯絡人選擇畫面 ──────────────────────────
   Future<void> _doEmergency() async {
     HapticFeedback.heavyImpact();
-    final app = context.read<AppProvider>();
-    if (app.contacts.isEmpty) {
-      _announce('尚未設定緊急連絡人，請到設定頁面新增');
-      await Future.delayed(const Duration(seconds: 2));
-      if (mounted) _goToSettings();
-      return;
-    }
     if (!mounted) return;
     Navigator.push(context,
         MaterialPageRoute(builder: (_) => const EmergencySelectScreen()));
@@ -217,15 +212,10 @@ class _BlindScreenState extends State<BlindScreen>
   Future<void> _switchToDeveloper() async {
     HapticFeedback.heavyImpact();
     await context.read<AppProvider>().stopNavigation();
-    if (mounted) Navigator.pushNamed(context, '/home');
+    if (mounted) Navigator.pushReplacementNamed(context, '/home');
   }
 
   // ── 頁面切換 ─────────────────────────────────────────────────────────────
-  void _goToSettings() {
-    _pageController.animateToPage(1,
-        duration: const Duration(milliseconds: 350), curve: Curves.easeInOut);
-    _announce('設定頁面。有緊急聯絡人、語音開關、語音速度、報位方式。向右滑動返回首頁。');
-  }
 
   // ── 輔助 ─────────────────────────────────────────────────────────────────
   bool _isNavigating(String s) =>
@@ -352,7 +342,16 @@ class _MainPage extends StatelessWidget {
     required this.onAnnounce,
   });
 
-  bool get _isNavigating => !['IDLE', 'CHAT', ''].contains(app.navState);
+  /// 伺服器端有避障/導航功能在運作
+  bool get _isObstacleActive => !['IDLE', 'CHAT', ''].contains(app.navState);
+  /// GPS 導航（Google Maps 背景語音）在運作
+  bool get _isGpsActive => app.gpsNavActive;
+
+  /// 距離文字格式化
+  String _distanceText(double meters) {
+    if (meters < 1000) return '${meters.toStringAsFixed(0)}公尺';
+    return '${(meters / 1000).toStringAsFixed(1)}公里';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -390,20 +389,20 @@ class _MainPage extends StatelessWidget {
           child: _TriggerButton(
             semanticsLabel: !app.connected
                 ? '伺服器未連線，無法導航'
-                : _isNavigating
-                    ? '停止導航，目前${_stateLabel(app.navState)}'
+                : _isGpsActive
+                    ? '停止導航，點擊結束 GPS 導航'
                     : '開始導航，點擊選擇目的地',
             onAction: onNavAction,
             onFocus: () => onAnnounce(
               !app.connected
                   ? '伺服器未連線'
-                  : _isNavigating ? '停止導航' : '開始導航',
+                  : _isGpsActive ? '停止導航' : '開始導航',
             ),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 300),
               color: !app.connected
                   ? const Color(0xFF212121)
-                  : _isNavigating
+                  : _isGpsActive
                       ? const Color(0xFFB71C1C)
                       : const Color(0xFF1565C0),
               child: Column(
@@ -412,7 +411,7 @@ class _MainPage extends StatelessWidget {
                   Icon(
                     !app.connected
                         ? Icons.wifi_off
-                        : _isNavigating
+                        : _isGpsActive
                             ? Icons.stop_circle_outlined
                             : Icons.navigation,
                     size: 80,
@@ -422,7 +421,7 @@ class _MainPage extends StatelessWidget {
                   Text(
                     !app.connected
                         ? '連線中…'
-                        : _isNavigating
+                        : _isGpsActive
                             ? '停止導航'
                             : '開始導航',
                     style: TextStyle(
@@ -431,25 +430,22 @@ class _MainPage extends StatelessWidget {
                       color: app.connected ? Colors.white : Colors.white38,
                     ),
                   ),
-                  if (_isNavigating) ...[
+                  if (_isGpsActive) ...[
                     const SizedBox(height: 8),
-                    Text(
-                      _stateLabel(app.navState),
-                      style: const TextStyle(
-                          fontSize: 22, color: Colors.white70),
-                    ),
                     // GPS 導航距離提示
-                    if (app.gpsNavActive && app.gpsDistance < double.infinity)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Semantics(
-                          label: '距離目的地 ${app.gpsDistance < 1000 ? '${app.gpsDistance.toStringAsFixed(0)}公尺' : '${(app.gpsDistance / 1000).toStringAsFixed(1)}公里'}',
-                          child: Text(
-                            '距離目的地 ${app.gpsDistance < 1000 ? '${app.gpsDistance.toStringAsFixed(0)}公尺' : '${(app.gpsDistance / 1000).toStringAsFixed(1)}公里'}',
-                            style: const TextStyle(
-                                fontSize: 18, color: Colors.yellowAccent),
-                          ),
+                    if (app.gpsDistance < double.infinity)
+                      Semantics(
+                        label: '距離目的地 ${_distanceText(app.gpsDistance)}',
+                        child: Text(
+                          '距離目的地 ${_distanceText(app.gpsDistance)}',
+                          style: const TextStyle(
+                              fontSize: 22, color: Colors.yellowAccent),
                         ),
+                      )
+                    else
+                      const Text(
+                        '正在取得位置…',
+                        style: TextStyle(fontSize: 20, color: Colors.white54),
                       ),
                   ],
                 ],
@@ -464,22 +460,22 @@ class _MainPage extends StatelessWidget {
           child: _TriggerButton(
             semanticsLabel: !app.connected
                 ? '伺服器未連線'
-                : _isNavigating
-                    ? '避障功能進行中，點擊停止'
-                    : '避障功能，點擊開啟盲道導航與障礙物偵測',
+                : _isObstacleActive
+                    ? '避障功能運作中，點擊停止'
+                    : '避障功能，點擊開啟障礙物偵測',
             onAction: onObstacleAvoidance,
             onFocus: () => onAnnounce(
-              _isNavigating ? '停止避障' : '避障功能',
+              _isObstacleActive ? '停止避障' : '避障功能',
             ),
             child: Container(
-              color: _isNavigating
+              color: _isObstacleActive
                   ? const Color(0xFF880E4F)
                   : const Color(0xFF4A148C),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
-                    _isNavigating ? Icons.stop : Icons.shield,
+                    _isObstacleActive ? Icons.stop : Icons.shield,
                     size: 32, color: Colors.white,
                   ),
                   const SizedBox(width: 12),
@@ -488,14 +484,16 @@ class _MainPage extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _isNavigating ? '停止避障' : '避障功能',
+                        _isObstacleActive ? '停止避障' : '避障功能',
                         style: const TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
                             color: Colors.white),
                       ),
                       Text(
-                        _isNavigating ? '點擊停止' : '盲道導航＋障礙物偵測',
+                        _isObstacleActive
+                            ? '${_stateLabel(app.navState)}，點擊停止'
+                            : '盲道導航＋障礙物偵測',
                         style: const TextStyle(
                             fontSize: 12, color: Colors.white60),
                       ),
@@ -615,6 +613,25 @@ class _SettingsPageState extends State<_SettingsPage> {
   static const _rates      = [0.35, 0.5, 0.7, 1.0];
   static const _rateLabels = ['慢速', '正常', '快速', '超快速'];
 
+  bool _isDevMode = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkDevMode();
+  }
+
+  Future<void> _checkDevMode() async {
+    try {
+      const channel = MethodChannel('com.aiglasses/app_control');
+      final result = await channel.invokeMethod<bool>('isDeveloperMode');
+      debugPrint('[Settings] isDeveloperMode = $result');
+      if (mounted) setState(() => _isDevMode = result ?? false);
+    } catch (e) {
+      debugPrint('[Settings] _checkDevMode 失敗: $e');
+    }
+  }
+
   String _rateLabel(double rate) {
     if (rate <= 0.35) return '慢速';
     if (rate <= 0.5)  return '正常';
@@ -715,15 +732,16 @@ class _SettingsPageState extends State<_SettingsPage> {
                   },
                 ),
 
-                const SizedBox(height: 4),
-
-                // ── 切換開發者模式 ─────────────────────────────────────
-                _BigBlock(
-                  label: '開發者模式',
-                  color: const Color(0xFF212121),
-                  onAnnounce: widget.onAnnounce,
-                  onAction: widget.onSwitchDev,
-                ),
+                // ── 切換開發者模式（僅手機開啟開發人員選項時顯示）───
+                if (_isDevMode) ...[
+                  const SizedBox(height: 4),
+                  _BigBlock(
+                    label: '開發者模式',
+                    color: const Color(0xFF212121),
+                    onAnnounce: widget.onAnnounce,
+                    onAction: widget.onSwitchDev,
+                  ),
+                ],
               ],
             ),
           ),

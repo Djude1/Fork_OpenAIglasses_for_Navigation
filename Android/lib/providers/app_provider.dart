@@ -632,15 +632,37 @@ class AppProvider extends ChangeNotifier {
     } catch (e) { _addMessage('[錯誤] $e'); }
   }
 
+  /// 停止所有功能（GPS + 伺服器避障）
   Future<void> stopNavigation() async {
     try {
-      // 同時停止 GPS 導航（如果有）
       GpsNavigationService.instance.stopNavigation();
       _gpsNavActive = false;
+      _gpsDistance = double.infinity;
       await _api.navStop();
       _navState = 'IDLE';
       notifyListeners();
-      if (!_isTalkBackOn) _tts.speak('已停止導航');
+      if (!_isTalkBackOn) _tts.speak('已停止所有功能');
+    } catch (e) { _addMessage('[錯誤] $e'); }
+  }
+
+  /// 只停止 GPS 導航（保留伺服器端避障）
+  Future<void> stopGpsNavigation() async {
+    try {
+      GpsNavigationService.instance.stopNavigation();
+      _gpsNavActive = false;
+      _gpsDistance = double.infinity;
+      notifyListeners();
+      if (!_isTalkBackOn) _tts.speak('已停止導航，避障功能繼續運作');
+    } catch (e) { _addMessage('[錯誤] $e'); }
+  }
+
+  /// 只停止伺服器端避障（保留 GPS 導航）
+  Future<void> stopObstacleAvoidance() async {
+    try {
+      await _api.navStop();
+      _navState = _gpsNavActive ? 'IDLE' : 'IDLE';
+      notifyListeners();
+      if (!_isTalkBackOn) _tts.speak('已停止避障');
     } catch (e) { _addMessage('[錯誤] $e'); }
   }
 
@@ -650,7 +672,8 @@ class AppProvider extends ChangeNotifier {
   double _gpsDistance = double.infinity;
   double get gpsDistance => _gpsDistance;
 
-  /// 啟動 GPS 導航：開 Google Maps 背景語音 + 前景避障 + GPS 距離監測
+  /// 啟動 GPS 導航：背景 Google Maps 語音 + GPS 距離監測
+  /// 避障功能需使用者自行開啟（獨立控制）
   Future<void> startGpsNavigation(Map<String, dynamic> place) async {
     final lat = (place['latitude'] as num?)?.toDouble() ?? 0;
     final lng = (place['longitude'] as num?)?.toDouble() ?? 0;
@@ -661,13 +684,7 @@ class AppProvider extends ChangeNotifier {
       return;
     }
 
-    // 1. 語音提示
-    speak('已選擇$name，啟動導航');
-
-    // 2. 啟動前景避障
-    await startBlindpath();
-
-    // 3. 啟動 GPS 導航（背景 Google Maps + 距離監測）
+    // 1. 啟動 GPS 導航（背景 Google Maps + 距離監測）
     _gpsNavActive = true;
     _gpsDistance = double.infinity;
     notifyListeners();
@@ -679,8 +696,12 @@ class AppProvider extends ChangeNotifier {
       onStateChanged: _onGpsStateChanged,
     );
 
-    if (!success) {
-      speak('GPS 啟動失敗，僅使用避障模式');
+    if (success) {
+      // 2. 同時啟動避障（讓使用者一邊聽 Google Maps 語音一邊避障）
+      await startBlindpath();
+      speak('前往$name，導航與避障已啟動。Google Maps 語音將在背景引導路線');
+    } else {
+      speak('GPS 啟動失敗，請確認已開啟定位權限');
       _gpsNavActive = false;
       notifyListeners();
     }
@@ -695,9 +716,9 @@ class AppProvider extends ChangeNotifier {
         speak('即將到達${GpsNavigationService.instance.destName}，剩餘${distance.toStringAsFixed(0)}公尺');
         break;
       case GpsNavState.arrived:
-        speak('已到達${GpsNavigationService.instance.destName}');
-        // 到達後自動結束所有導航
-        Future.delayed(const Duration(seconds: 2), () => stopNavigation());
+        speak('已到達${GpsNavigationService.instance.destName}，導航結束，避障功能繼續運作');
+        // 到達後只停 GPS 導航，保留避障
+        Future.delayed(const Duration(seconds: 2), () => stopGpsNavigation());
         break;
       default:
         break;
