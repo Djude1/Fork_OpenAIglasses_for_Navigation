@@ -624,13 +624,13 @@
   <input id="az_sl" type="range"><span id="az_val"></span>
 </div>
 
-<!-- three.js importmap -->
+<!-- three.js importmap（使用本地檔案，避免每次連外部 CDN）-->
 <script type="importmap">{
-  "imports": { "three": "https://unpkg.com/three@0.155.0/build/three.module.js" }
+  "imports": { "three": "/static/three/three.module.js" }
 }</script>
 
-<!-- 主脚本 -->
-<script type="module" src="static/main.js"></script>
+<!-- 主脚本（defer：讓頁面先渲染完 HTML，再執行 JS）-->
+<script type="module" src="static/main.js" defer></script>
 
 <!-- APP後台切換邏輯 -->
 <script>

@@ -85,7 +85,28 @@ from auth import router as auth_router
 app.include_router(auth_router)
 
 # ====== 状态与容器 ======
-app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# ── 靜態檔案（加入 Cache-Control，讓瀏覽器快取避免每次重載）──────────────────
+from starlette.staticfiles import StaticFiles as _StaticFiles
+from starlette.responses import Response as _Response
+
+class _CachedStaticFiles(_StaticFiles):
+    """根據副檔名設定不同快取時間：
+      .glb/.gltf  → 7 天（3D模型幾乎不變動）
+      .js/.css    → 1 小時
+      其他         → 30 分鐘
+    """
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if path.endswith(('.glb', '.gltf')):
+            response.headers['Cache-Control'] = 'public, max-age=604800'   # 7天
+        elif path.endswith(('.js', '.css')):
+            response.headers['Cache-Control'] = 'public, max-age=3600'     # 1小時
+        else:
+            response.headers['Cache-Control'] = 'public, max-age=1800'     # 30分鐘
+        return response
+
+app.mount("/static", _CachedStaticFiles(directory="static"), name="static")
 
 ui_clients: Dict[int, WebSocket] = {}
 current_partial: str = ""

@@ -331,7 +331,7 @@ const BASE_PATH = location.pathname.startsWith('/GlassesBackstage') ? '/GlassesB
 
 // ================= IMU 3D（无虚线框、无滚动条、上下对齐、自适应） =================
 import * as THREE from 'three';
-import { GLTFLoader } from 'https://unpkg.com/three@0.155.0/examples/jsm/loaders/GLTFLoader.js';
+import { GLTFLoader } from '/static/three/GLTFLoader.js';
 
 (() => {
   const container = document.getElementById('imu_view'); // 左侧3D容器
@@ -626,42 +626,46 @@ import { GLTFLoader } from 'https://unpkg.com/three@0.155.0/examples/jsm/loaders
     rimLight.color.setHSL(0.5 + hue, 1.0, 0.7);
   }
 
-  // ========== 模型 ==========
+  // ========== 模型（延遲 1.5 秒再載入，讓頁面主要功能先就緒）==========
   let glassModel = null;
-  const loader = new GLTFLoader();
-  loader.load(
-    BASE_PATH + '/static/models/aiglass.glb',
-    (gltf) => {
-      glassModel = gltf.scene;
-      glassModel.scale.set(2, 2, 2);
-      glassModel.position.set(0, 0, 0);
-      glassModel.traverse((child) => {
-        if (child.isMesh) {
-          child.castShadow = true;
-          child.receiveShadow = true;
-          if (child.material) {
-            if (child.material.transparent || child.material.opacity < 1) {
-              child.material.envMapIntensity = 1.5;
-              child.material.roughness = 0.1;
-              child.material.metalness = 0.8;
+  function loadGlassModel() {
+    const loader = new GLTFLoader();
+    loader.load(
+      BASE_PATH + '/static/models/aiglass.glb',
+      (gltf) => {
+        glassModel = gltf.scene;
+        glassModel.scale.set(2, 2, 2);
+        glassModel.position.set(0, 0, 0);
+        glassModel.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+            if (child.material) {
+              if (child.material.transparent || child.material.opacity < 1) {
+                child.material.envMapIntensity = 1.5;
+                child.material.roughness = 0.1;
+                child.material.metalness = 0.8;
+              }
             }
           }
-        }
-      });
-      group.add(glassModel);
-    },
-    undefined,
-    (error) => {
-      console.error('GLB加载失败:', error);
-      const fallbackCube = new THREE.Mesh(
-        new THREE.BoxGeometry(2,2,2),
-        new THREE.MeshStandardMaterial({ color: 0x00aaff, metalness: 0.7, roughness: 0.3, envMapIntensity: 1.0 })
-      );
-      fallbackCube.castShadow = true;
-      fallbackCube.receiveShadow = true;
-      group.add(fallbackCube);
-    }
-  );
+        });
+        group.add(glassModel);
+      },
+      undefined,
+      (error) => {
+        console.error('GLB加载失败:', error);
+        const fallbackCube = new THREE.Mesh(
+          new THREE.BoxGeometry(2,2,2),
+          new THREE.MeshStandardMaterial({ color: 0x00aaff, metalness: 0.7, roughness: 0.3, envMapIntensity: 1.0 })
+        );
+        fallbackCube.castShadow = true;
+        fallbackCube.receiveShadow = true;
+        group.add(fallbackCube);
+      }
+    );
+  }
+  // 頁面載入完成後延遲 1.5 秒才開始下載 14MB 模型，不阻塞主要功能
+  setTimeout(loadGlassModel, 1500);
 
   // 渲染循环
   (function animate(){

@@ -108,6 +108,29 @@ class _HomeScreenState extends State<HomeScreen> {
         MaterialPageRoute(builder: (_) => ArScreen(title: title)));
   }
 
+  // ── GPS 導航：選目的地後開啟 AR 畫面 ──────────────────────────────────
+  Future<void> _startGpsNavigation() async {
+    HapticFeedback.heavyImpact();
+    final app = context.read<AppProvider>();
+    if (!app.connected) return;
+
+    // 已在 GPS 導航中 → 停止 GPS（保留避障）
+    if (app.gpsNavActive) {
+      await app.stopGpsNavigation();
+      return;
+    }
+
+    // 進入目的地選擇畫面，等待返回
+    await Navigator.pushNamed(context, '/nav_dest');
+
+    // 返回後檢查：若 GPS 導航已啟動，開啟 AR 畫面
+    if (!mounted) return;
+    if (context.read<AppProvider>().gpsNavActive) {
+      Navigator.push(context,
+          MaterialPageRoute(builder: (_) => const ArScreen(title: 'GPS 導航')));
+    }
+  }
+
   Future<void> _showItemSearchDialog() async {
     HapticFeedback.selectionClick();
     final ctrl = TextEditingController();
@@ -175,6 +198,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   app:         app,
                   scrollCtrl:  _scrollCtrl,
                   onStartAr:   _startAndShowAr,
+                  onGpsNav:    _startGpsNavigation,
                   onItemSearch: _showItemSearchDialog,
                   onGoSettings: _goToSettings,
                 ),
@@ -202,6 +226,7 @@ class _MainPage extends StatelessWidget {
   final AppProvider app;
   final ScrollController scrollCtrl;
   final Future<void> Function(Future<void> Function(), String) onStartAr;
+  final VoidCallback onGpsNav;
   final VoidCallback onItemSearch;
   final VoidCallback onGoSettings;
 
@@ -209,11 +234,20 @@ class _MainPage extends StatelessWidget {
     required this.app,
     required this.scrollCtrl,
     required this.onStartAr,
+    required this.onGpsNav,
     required this.onItemSearch,
     required this.onGoSettings,
   });
 
   bool get _navigating => !['IDLE', 'CHAT', ''].contains(app.navState);
+
+  /// GPS 距離文字（有距離時顯示）
+  String _gpsDistText(AppProvider app) {
+    final d = app.gpsDistance;
+    if (d <= 0) return '';
+    if (d >= 1000) return '（${(d / 1000).toStringAsFixed(1)} km）';
+    return '（${d.toInt()} m）';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -274,34 +308,58 @@ class _MainPage extends StatelessWidget {
           ),
         ),
 
-        // ── 盲道導航（最大色塊）───────────────────────────────────────
+        // ── GPS 導航（選目的地 + AR 避障畫面）──────────────────────────
         Expanded(
-          flex: 38,
+          flex: 24,
+          child: Builder(builder: (_) {
+            final gpsActive = app.gpsNavActive;
+            return _NavBlock(
+              label:    'GPS 導航',
+              sublabel: gpsActive
+                  ? '導航中${_gpsDistText(app)} — 點擊停止'
+                  : ok ? '選擇目的地 + AR 避障' : '未連線',
+              icon:     gpsActive
+                  ? Icons.stop_circle_outlined
+                  : Icons.map,
+              color: !ok
+                  ? const Color(0xFF212121)
+                  : gpsActive
+                      ? const Color(0xFFB71C1C)
+                      : const Color(0xFF00695C),
+              isActive: gpsActive,
+              onTap:    ok ? onGpsNav : null,
+            );
+          }),
+        ),
+
+        // ── 避障導航（避障 AR）────────────────────────────────────────
+        Expanded(
+          flex: 24,
           child: _NavBlock(
-            label:    '盲道導航',
+            label:    '避障導航',
             sublabel: _navigating && nav == 'BLINDPATH_NAV'
                 ? '導航中 — 點擊停止'
                 : ok ? '點擊啟動' : '未連線',
             icon:     _navigating && nav == 'BLINDPATH_NAV'
                 ? Icons.stop_circle_outlined
-                : Icons.navigation,
+                : Icons.shield,
             color: !ok
                 ? const Color(0xFF212121)
                 : nav == 'BLINDPATH_NAV'
                     ? const Color(0xFFB71C1C)
-                    : const Color(0xFF0D47A1),
+                    : const Color(0xFF4A148C),
             isActive: nav == 'BLINDPATH_NAV',
             onTap: ok
                 ? () => nav == 'BLINDPATH_NAV'
                     ? app.stopNavigation()
-                    : onStartAr(app.startBlindpath, '盲道導航')
+                    : onStartAr(app.startBlindpath, '避障導航')
                 : null,
           ),
         ),
 
         // ── 過馬路 ───────────────────────────────────────────────────
         Expanded(
-          flex: 18,
+          flex: 14,
           child: Builder(builder: (_) {
             final crossingStates = ['CROSSING', 'SEEKING_CROSSWALK',
                 'WAIT_TRAFFIC_LIGHT', 'SEEKING_NEXT_BLINDPATH'];
@@ -331,7 +389,7 @@ class _MainPage extends StatelessWidget {
 
         // ── 紅綠燈偵測 ──────────────────────────────────────────────
         Expanded(
-          flex: 15,
+          flex: 12,
           child: Builder(builder: (_) {
             final isDetecting = nav == 'TRAFFIC_LIGHT_DETECTION';
             return _NavBlock(
@@ -359,7 +417,7 @@ class _MainPage extends StatelessWidget {
 
         // ── 找物品 / 停止（橫排各佔一半）──────────────────────────
         Expanded(
-          flex: 14,
+          flex: 12,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -398,7 +456,7 @@ class _MainPage extends StatelessWidget {
 
         // ── 訊息記錄 ─────────────────────────────────────────────────
         Expanded(
-          flex: 18,
+          flex: 16,
           child: Container(
             color: const Color(0xFF0A0A0A),
             padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),

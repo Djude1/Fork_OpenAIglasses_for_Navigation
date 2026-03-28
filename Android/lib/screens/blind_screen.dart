@@ -390,13 +390,13 @@ class _MainPage extends StatelessWidget {
             semanticsLabel: !app.connected
                 ? '伺服器未連線，無法導航'
                 : _isGpsActive
-                    ? '停止導航，點擊結束 GPS 導航'
-                    : '開始導航，點擊選擇目的地',
+                    ? '停止 GPS，點擊結束 GPS 導航'
+                    : 'GPS 導航，點擊選擇目的地',
             onAction: onNavAction,
             onFocus: () => onAnnounce(
               !app.connected
                   ? '伺服器未連線'
-                  : _isGpsActive ? '停止導航' : '開始導航',
+                  : _isGpsActive ? '停止 GPS' : 'GPS 導航',
             ),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 300),
@@ -413,7 +413,7 @@ class _MainPage extends StatelessWidget {
                         ? Icons.wifi_off
                         : _isGpsActive
                             ? Icons.stop_circle_outlined
-                            : Icons.navigation,
+                            : Icons.map,
                     size: 80,
                     color: app.connected ? Colors.white : Colors.white38,
                   ),
@@ -422,8 +422,8 @@ class _MainPage extends StatelessWidget {
                     !app.connected
                         ? '連線中…'
                         : _isGpsActive
-                            ? '停止導航'
-                            : '開始導航',
+                            ? '停止 GPS'
+                            : 'GPS 導航',
                     style: TextStyle(
                       fontSize: 42,
                       fontWeight: FontWeight.bold,
@@ -461,11 +461,11 @@ class _MainPage extends StatelessWidget {
             semanticsLabel: !app.connected
                 ? '伺服器未連線'
                 : _isObstacleActive
-                    ? '避障功能運作中，點擊停止'
-                    : '避障功能，點擊開啟障礙物偵測',
+                    ? '避障導航運作中，點擊停止'
+                    : '避障導航，點擊開啟障礙物偵測',
             onAction: onObstacleAvoidance,
             onFocus: () => onAnnounce(
-              _isObstacleActive ? '停止避障' : '避障功能',
+              _isObstacleActive ? '停止避障導航' : '避障導航',
             ),
             child: Container(
               color: _isObstacleActive
@@ -484,7 +484,7 @@ class _MainPage extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _isObstacleActive ? '停止避障' : '避障功能',
+                        _isObstacleActive ? '停止避障導航' : '避障導航',
                         style: const TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,

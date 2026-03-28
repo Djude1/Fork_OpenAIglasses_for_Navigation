@@ -124,7 +124,6 @@ from content.models import (
     SiteSettings, HomeContent, ProductPageContent,
     DownloadPageContent, DownloadFeature, DownloadStep,
     PurchasePageContent, TeamPageContent,
-    AppServerConfig,
 )
 
 # 載入所有 Singleton 模型（自動建立預設值）
@@ -134,7 +133,6 @@ ProductPageContent.load()
 DownloadPageContent.load()
 PurchasePageContent.load()
 TeamPageContent.load()
-AppServerConfig.load()
 print('Singleton 內容模型初始化完成')
 
 # 建立 APP 功能特色

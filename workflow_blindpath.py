@@ -16,6 +16,7 @@ import torch  # 添加这行
 from obstacle_detector_client import ObstacleDetectorClient
 from audio_player import play_voice_text  # 新增
 from crosswalk_awareness import CrosswalkAwarenessMonitor, split_combined_voice  # 斑马线感知
+from gemini_scene_describer import GeminiSceneDescriber  # Gemini 場景補充描述
 # 尝试导入 Pillow，用于中文显示
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -237,6 +238,9 @@ class BlindPathNavigator:
         
         # 障碍物语音待播报
         self.pending_obstacle_voice = None
+
+        # Gemini 背景場景補充描述（每 10 秒、YOLO 無事件時播報）
+        self._scene_describer = GeminiSceneDescriber()
         
         # 红绿灯检测
         self.traffic_light_detector = None
@@ -451,7 +455,10 @@ class BlindPathNavigator:
         :return: 处理结果
         """
         self.frame_counter += 1
-        
+
+        # Gemini 場景補充：每幀 tick，觸發背景非同步分析
+        self._scene_describer.tick(image, navigation_active=True)
+
         # 更新冷却期
         if self.turn_cooldown_frames > 0:
             self.turn_cooldown_frames -= 1
@@ -845,7 +852,12 @@ class BlindPathNavigator:
                     logger.error(f"[语音播报] 播放失败: {e}")
         else:
             final_guidance_text = ""
-        
+            # YOLO 無事件時，嘗試播報 Gemini 補充描述（優先級最低）
+            scene_extra = self._scene_describer.get_pending()
+            if scene_extra:
+                play_voice_text(scene_extra)
+                guidance_text = scene_extra  # 讓上層廣播至 APP WebSocket
+
         # 7. 生成标注图像
         annotated_image = None
 
