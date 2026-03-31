@@ -14,7 +14,7 @@ function MemberCard({ member }) {
             className="w-20 h-20 rounded-2xl object-cover mx-auto"
           />
         ) : (
-          <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-brand-700 to-brand-900 flex items-center justify-center text-3xl font-bold text-brand-300 mx-auto">
+          <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-warm-600 to-warm-800 dark:from-brand-700 dark:to-brand-900 flex items-center justify-center text-3xl font-bold text-warm-200 dark:text-brand-300 mx-auto">
             {member.name.charAt(0)}
           </div>
         )}
@@ -22,12 +22,12 @@ function MemberCard({ member }) {
 
       {/* 資訊 */}
       <div className="text-center">
-        <h3 className="font-semibold text-white text-lg group-hover:text-brand-400 transition-colors">
+        <h3 className="font-semibold text-gray-900 dark:text-white text-lg group-hover:text-warm-500 dark:group-hover:text-brand-400 transition-colors">
           {member.name}
         </h3>
-        <p className="text-brand-400 text-sm mt-1 mb-3">{member.role}</p>
+        <p className="text-warm-600 dark:text-brand-400 text-sm mt-1 mb-3">{member.role}</p>
         {member.bio && (
-          <p className="text-gray-400 text-xs leading-relaxed line-clamp-3">{member.bio}</p>
+          <p className="text-gray-600 dark:text-gray-400 text-xs leading-relaxed line-clamp-3">{member.bio}</p>
         )}
       </div>
 
@@ -38,7 +38,7 @@ function MemberCard({ member }) {
             href={member.github_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-gray-500 hover:text-white transition-colors"
+            className="text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors"
             title="GitHub"
           >
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -62,7 +62,7 @@ function MemberCard({ member }) {
         {member.email && (
           <a
             href={`mailto:${member.email}`}
-            className="text-gray-500 hover:text-brand-400 transition-colors"
+            className="text-gray-500 hover:text-warm-500 dark:hover:text-brand-400 transition-colors"
             title="Email"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -142,11 +142,11 @@ export default function Team() {
         {developerMembers.length > 0 && (
           <section>
             <div className="flex items-center gap-4 mb-8">
-              <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/20 to-transparent" />
-              <h2 className="text-xl font-semibold text-white whitespace-nowrap px-4">
+              <div className="h-px flex-1 bg-gradient-to-r from-transparent via-gray-300 dark:via-white/20 to-transparent" />
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white whitespace-nowrap px-4">
                 {c.developer_title || '我們的開發團隊'}
               </h2>
-              <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+              <div className="h-px flex-1 bg-gradient-to-r from-transparent via-gray-300 dark:via-white/20 to-transparent" />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {developerMembers.map((member) => (

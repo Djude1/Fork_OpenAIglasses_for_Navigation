@@ -55,16 +55,16 @@ export default function Home() {
       <section className="relative overflow-hidden">
         {/* 背景裝飾 */}
         <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-brand-600/10 rounded-full blur-3xl" />
-          <div className="absolute bottom-1/4 right-1/4 w-64 h-64 bg-brand-500/5 rounded-full blur-3xl" />
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-warm-600/10 dark:bg-brand-600/10 rounded-full blur-3xl" />
+          <div className="absolute bottom-1/4 right-1/4 w-64 h-64 bg-warm-500/5 dark:bg-brand-500/5 rounded-full blur-3xl" />
           <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-brand-950/20 via-transparent to-transparent" />
         </div>
 
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-28 pb-16 grid grid-cols-1 lg:grid-cols-2 gap-12 lg:items-center">
           {/* 左側文字 */}
           <div className="animate-fade-in-up">
-            <div className="inline-flex items-center gap-2 glass rounded-full px-4 py-2 text-sm text-brand-400 mb-6">
-              <span className="w-2 h-2 bg-brand-400 rounded-full animate-pulse-slow" />
+            <div className="inline-flex items-center gap-2 glass rounded-full px-4 py-2 text-sm text-warm-600 dark:text-brand-400 mb-6">
+              <span className="w-2 h-2 bg-warm-400 dark:bg-brand-400 rounded-full animate-pulse-slow" />
               {c.hero_badge || '基於 OpenAIglasses_for_Navigation 開源專案'}
             </div>
 
@@ -77,8 +77,8 @@ export default function Home() {
                     onClick={() => switchTo(i)}
                     className={`text-xs px-3.5 py-1.5 rounded-full border font-medium transition-all duration-200 ${
                       currentIdx === i
-                        ? 'bg-brand-500 border-brand-500 text-white shadow-lg shadow-brand-500/30'
-                        : 'border-brand-500/40 text-brand-400 hover:border-brand-400 hover:text-brand-300'
+                        ? 'bg-warm-500 border-warm-500 dark:bg-brand-500 dark:border-brand-500 text-white shadow-lg shadow-warm-500/30 dark:shadow-brand-500/30'
+                        : 'border-warm-500/40 dark:border-brand-500/40 text-warm-600 dark:text-brand-400 hover:border-warm-400 dark:hover:border-brand-400 hover:text-warm-400 dark:hover:text-brand-300'
                     }`}
                   >
                     {p.name}
@@ -90,27 +90,27 @@ export default function Home() {
             <h1 className="text-5xl md:text-6xl font-bold leading-tight mb-6">
               {currentProduct ? (
                 <>
-                  <span className="text-white">
+                  <span className="text-gray-900 dark:text-white">
                     {currentProduct.name.split(/[\s　]/)[0]}
                   </span>
                   <br />
-                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-400 to-brand-600">
+                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-warm-400 to-warm-600 dark:from-brand-400 dark:to-brand-600">
                     {currentProduct.name.split(/[\s　]/).slice(1).join(' ') ||
                       <>{c.hero_title_2 || '智慧眼鏡'}</>}
                   </span>
                 </>
               ) : (
                 <>
-                  <span className="text-white">{c.hero_title_1 || 'AI 導航'}</span>
+                  <span className="text-gray-900 dark:text-white">{c.hero_title_1 || 'AI 導航'}</span>
                   <br />
-                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-400 to-brand-600">
+                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-warm-400 to-warm-600 dark:from-brand-400 dark:to-brand-600">
                     {c.hero_title_2 || '智慧眼鏡'}
                   </span>
                 </>
               )}
             </h1>
 
-            <p className="text-gray-400 text-lg leading-relaxed mb-8 max-w-xl">
+            <p className="text-gray-600 dark:text-gray-400 text-lg leading-relaxed mb-8 max-w-xl">
               {currentProduct?.short_description ||
                 c.hero_description ||
                 '將 OpenAI GPT 語音助理與 AR 擴增實境導航融合於一副輕巧眼鏡之中，讓您在行走間輕鬆獲取路線指引、AI 問答、環境資訊，開啟次世代穿戴體驗。'}
@@ -136,7 +136,7 @@ export default function Home() {
                 { num: c.stat_3_value || 'GPT',  label: c.stat_3_label || 'AI 核心' },
               ].map((stat) => (
                 <div key={stat.label}>
-                  <div className="text-2xl font-bold text-brand-400">{stat.num}</div>
+                  <div className="text-2xl font-bold text-warm-600 dark:text-brand-400">{stat.num}</div>
                   <div className="text-sm text-gray-500">{stat.label}</div>
                 </div>
               ))}
@@ -148,7 +148,7 @@ export default function Home() {
             <div className="w-full h-full">
               <ModelViewer modelUrl={modelUrl} className="w-full h-full" />
             </div>
-            <p className="text-center text-xs text-gray-600 mt-2">
+            <p className="text-center text-xs text-gray-400 dark:text-gray-600 mt-2">
               {c.model_hint || '拖曳旋轉 · 滾輪縮放'}
             </p>
           </div>
@@ -156,7 +156,7 @@ export default function Home() {
       </section>
 
       {/* ── 特色亮點 ── */}
-      <section className="py-20 bg-gray-900/50">
+      <section className="py-20 bg-gray-50 dark:bg-gray-900/50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <h2 className="section-title">
             {currentProduct
@@ -173,18 +173,18 @@ export default function Home() {
                 className="glass rounded-2xl p-6 hover:glow-border transition-all duration-300 group"
               >
                 <div className="text-4xl mb-4">{item.icon}</div>
-                <h3 className="font-semibold text-white mb-2 group-hover:text-brand-400 transition-colors">
+                <h3 className="font-semibold text-gray-900 dark:text-white mb-2 group-hover:text-warm-500 dark:group-hover:text-brand-400 transition-colors">
                   {item.title}
                 </h3>
-                <p className="text-gray-400 text-sm leading-relaxed">{item.description}</p>
+                <p className="text-gray-600 dark:text-gray-400 text-sm leading-relaxed">{item.description}</p>
               </div>
             )) : (
               /* 載入中佔位 */
               Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className="glass rounded-2xl p-6 animate-pulse">
-                  <div className="w-10 h-10 bg-white/10 rounded-lg mb-4" />
-                  <div className="h-4 bg-white/10 rounded mb-2 w-3/4" />
-                  <div className="h-3 bg-white/5 rounded w-full" />
+                  <div className="w-10 h-10 bg-gray-200/10 dark:bg-white/10 rounded-lg mb-4" />
+                  <div className="h-4 bg-gray-200/10 dark:bg-white/10 rounded mb-2 w-3/4" />
+                  <div className="h-3 bg-gray-100/5 dark:bg-white/5 rounded w-full" />
                 </div>
               ))
             )}
@@ -192,7 +192,7 @@ export default function Home() {
 
           {/* 產品列表預覽（多產品時顯示其他產品） */}
           {products.length > 1 && (
-            <div className="mt-12 pt-10 border-t border-white/5">
+            <div className="mt-12 pt-10 border-t border-gray-100 dark:border-white/5">
               <h3 className="text-center text-sm text-gray-500 mb-6 uppercase tracking-widest">
                 其他產品
               </h3>
@@ -203,13 +203,13 @@ export default function Home() {
                     onClick={() => switchTo(i)}
                     className="glass rounded-xl px-6 py-4 text-left hover:glow-border transition-all group"
                   >
-                    <div className="text-sm font-semibold text-white group-hover:text-brand-400 transition-colors">
+                    <div className="text-sm font-semibold text-gray-900 dark:text-white group-hover:text-warm-500 dark:group-hover:text-brand-400 transition-colors">
                       {p.name}
                     </div>
                     <div className="text-xs text-gray-500 mt-1 max-w-[200px] truncate">
                       {p.short_description}
                     </div>
-                    <div className="text-brand-400 text-sm font-bold mt-2">
+                    <div className="text-warm-600 dark:text-brand-400 text-sm font-bold mt-2">
                       NT${Number(p.price).toLocaleString()}
                     </div>
                   </button>
@@ -227,7 +227,7 @@ export default function Home() {
             <h2 className="text-3xl md:text-4xl font-bold mb-4">
               {c.cta_title || '準備好體驗 AI 穿戴未來了嗎？'}
             </h2>
-            <p className="text-gray-400 mb-8 text-lg">
+            <p className="text-gray-600 dark:text-gray-400 mb-8 text-lg">
               {c.cta_description || '現在訂購享有早鳥優惠，限時特惠中。'}
               {currentProduct && ` 原價 NT$${originalPrice}，限時優惠 NT$${price}。`}
             </p>

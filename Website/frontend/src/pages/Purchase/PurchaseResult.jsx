@@ -46,7 +46,7 @@ export default function PurchaseResult() {
   if (loading) {
     return (
       <div className="min-h-screen pt-24 flex items-center justify-center px-4">
-        <div className="text-center text-gray-400">
+        <div className="text-center text-gray-600 dark:text-gray-400">
           <div className="w-12 h-12 border-4 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
           <p className="text-lg">正在確認付款結果…</p>
           <p className="text-sm mt-2 text-gray-500">請稍候，這可能需要幾秒鐘</p>
@@ -60,8 +60,8 @@ export default function PurchaseResult() {
       <div className="min-h-screen pt-24 flex items-center justify-center px-4">
         <div className="max-w-md w-full glass rounded-3xl p-10 text-center">
           <div className="text-6xl mb-6">⚠️</div>
-          <h2 className="text-2xl font-bold text-white mb-4">發生錯誤</h2>
-          <p className="text-gray-400 mb-6">{error}</p>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">發生錯誤</h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">{error}</p>
           <Link to="/purchase" className="btn-outline w-full block text-center">返回購買頁</Link>
         </div>
       </div>
@@ -80,8 +80,8 @@ export default function PurchaseResult() {
         {isPaid && (
           <>
             <div className="text-6xl mb-6">✅</div>
-            <h2 className="text-2xl font-bold text-white mb-2">付款成功！</h2>
-            <p className="text-gray-400 mb-6">訂單已確認，我們將儘快出貨。</p>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">付款成功！</h2>
+            <p className="text-gray-600 dark:text-gray-400 mb-6">訂單已確認，我們將儘快出貨。</p>
           </>
         )}
 
@@ -89,8 +89,8 @@ export default function PurchaseResult() {
         {isFailed && (
           <>
             <div className="text-6xl mb-6">❌</div>
-            <h2 className="text-2xl font-bold text-white mb-2">付款失敗</h2>
-            <p className="text-gray-400 mb-6">交易未完成，請重新嘗試。</p>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">付款失敗</h2>
+            <p className="text-gray-600 dark:text-gray-400 mb-6">交易未完成，請重新嘗試。</p>
           </>
         )}
 
@@ -99,7 +99,7 @@ export default function PurchaseResult() {
           <>
             <div className="text-6xl mb-6">⏳</div>
             <h2 className="text-2xl font-bold text-white mb-2">付款確認中</h2>
-            <p className="text-gray-400 mb-6">
+            <p className="text-gray-600 dark:text-gray-400 mb-6">
               訂單已收到，付款狀態更新可能需要幾分鐘，請稍後再查詢。
             </p>
           </>
@@ -107,28 +107,28 @@ export default function PurchaseResult() {
 
         {/* 訂單資訊 */}
         {order && (
-          <div className="bg-white/5 rounded-2xl p-6 text-left mb-6 space-y-2">
+          <div className="bg-gray-50 dark:bg-white/5 rounded-2xl p-6 text-left mb-6 space-y-2">
             <div className="flex justify-between text-sm">
-              <span className="text-gray-400">訂單編號</span>
-              <span className="text-brand-400 font-mono">{order.order_number}</span>
+              <span className="text-gray-600 dark:text-gray-400">訂單編號</span>
+              <span className="text-warm-600 dark:text-brand-400 font-mono">{order.order_number}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-400">購買人</span>
-              <span className="text-white">{order.customer_name}</span>
+              <span className="text-gray-900 dark:text-white">{order.customer_name}</span>
             </div>
             {order.items?.length > 0 && (
-              <div className="pt-2 border-t border-white/10 space-y-1">
+              <div className="pt-2 border-t border-gray-200 dark:border-white/10 space-y-1">
                 {order.items.map((item) => (
                   <div key={item.id} className="flex justify-between text-sm">
-                    <span className="text-gray-400">{item.product_name} × {item.quantity}</span>
-                    <span className="text-white">NT${(Number(item.price) * item.quantity).toLocaleString()}</span>
+                    <span className="text-gray-600 dark:text-gray-400">{item.product_name} × {item.quantity}</span>
+                    <span className="text-gray-900 dark:text-white">NT${(Number(item.price) * item.quantity).toLocaleString()}</span>
                   </div>
                 ))}
               </div>
             )}
-            <div className="flex justify-between text-base font-semibold pt-2 border-t border-white/10">
-              <span className="text-white">總金額</span>
-              <span className="text-brand-400">NT${Number(order.total_price).toLocaleString()}</span>
+            <div className="flex justify-between text-base font-semibold pt-2 border-t border-gray-200 dark:border-white/10">
+              <span className="text-gray-900 dark:text-white">總金額</span>
+              <span className="text-warm-600 dark:text-brand-400">NT${Number(order.total_price).toLocaleString()}</span>
             </div>
           </div>
         )}

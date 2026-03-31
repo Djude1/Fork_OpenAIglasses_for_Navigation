@@ -42,7 +42,7 @@ export default function App() {
             <CartProvider>
               <PageTracker />
               <ScrollToTop />
-              <div className="min-h-screen flex flex-col bg-gray-950 text-white">
+              <div className="min-h-screen flex flex-col bg-white text-gray-900 dark:bg-gray-950 dark:text-white">
                 <Navbar />
                 <main className="flex-1">
                   <Routes>

@@ -9,45 +9,49 @@
 
   body {
     font-family: 'Noto Sans TC', sans-serif;
-    background-color: #030712;
-    color: #f9fafb;
+    @apply bg-white text-gray-900 dark:bg-[#030712] dark:text-[#f9fafb];
   }
 }
 
 @layer components {
   /* 玻璃擬態效果 */
   .glass {
-    @apply bg-white/5 backdrop-blur-md border border-white/10;
+    @apply bg-gray-100/50 backdrop-blur-md border border-gray-200
+           dark:bg-white/5 dark:border-white/10;
   }
 
   /* 發光邊框 */
   .glow-border {
     box-shadow: 0 0 20px rgba(30, 196, 247, 0.3);
-    @apply border border-brand-500/50;
+    @apply border border-warm-500/50 dark:border-brand-500/50;
   }
 
   /* 主要按鈕 */
   .btn-primary {
-    @apply bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-500 hover:to-brand-400
+    @apply bg-gradient-to-r from-warm-600 to-warm-500 hover:from-warm-500 hover:to-warm-400
+           dark:from-brand-600 dark:to-brand-500 dark:hover:from-brand-500 dark:hover:to-brand-400
            text-white font-semibold py-3 px-8 rounded-full transition-all duration-300
-           hover:shadow-lg hover:shadow-brand-500/30 active:scale-95;
+           hover:shadow-lg hover:shadow-warm-500/30 dark:hover:shadow-brand-500/30
+           active:scale-95;
   }
 
   /* 次要按鈕（外框式）*/
   .btn-outline {
-    @apply border border-brand-500/70 text-brand-400 hover:bg-brand-500/10
+    @apply border border-warm-500/70 text-warm-700 hover:bg-warm-500/10
+           dark:border-brand-500/70 dark:text-brand-400 dark:hover:bg-brand-500/10
            font-semibold py-3 px-8 rounded-full transition-all duration-300
-           hover:border-brand-400 active:scale-95;
+           hover:border-warm-400 dark:hover:border-brand-400 active:scale-95;
   }
 
   /* 段落標題 */
   .section-title {
-    @apply text-3xl md:text-4xl font-bold text-center mb-4;
+    @apply text-3xl md:text-4xl font-bold text-center mb-4
+           text-gray-900 dark:text-white;
   }
 
   /* 段落副標題 */
   .section-subtitle {
-    @apply text-gray-400 text-center max-w-2xl mx-auto mb-12 text-lg;
+    @apply text-gray-600 dark:text-gray-400 text-center max-w-2xl mx-auto mb-12 text-lg;
   }
 }
 
@@ -57,11 +61,11 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #111827;
+  @apply bg-gray-100 dark:bg-[#111827];
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #07a3d7;
+  @apply bg-warm-500 dark:bg-brand-600;
   border-radius: 3px;
 }
 

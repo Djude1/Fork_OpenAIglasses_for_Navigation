@@ -156,7 +156,7 @@ export default function Purchase() {
 
             {/* 商品選擇 */}
             <div className="glass rounded-2xl p-6">
-              <h2 className="font-semibold text-white mb-4">{c.select_products_title || '選擇商品'}</h2>
+              <h2 className="font-semibold text-gray-900 dark:text-white mb-4">{c.select_products_title || '選擇商品'}</h2>
               {errors.items && (
                 <p className="text-red-400 text-xs mb-3">{errors.items}</p>
               )}
@@ -171,15 +171,15 @@ export default function Purchase() {
                         key={p.id}
                         className={`rounded-xl border p-4 transition-all ${
                           qty > 0
-                            ? 'border-brand-500/50 bg-brand-500/5'
-                            : 'border-white/10 bg-white/[0.02]'
+                            ? 'border-warm-500/50 bg-warm-500/5 dark:border-brand-500/50 dark:bg-brand-500/5'
+                            : 'border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/[0.02]'
                         }`}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-white truncate">{p.name}</p>
+                            <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{p.name}</p>
                             <p className="text-xs text-gray-500 mt-0.5 truncate">{p.short_description}</p>
-                            <p className="text-brand-400 text-sm font-semibold mt-1">
+                            <p className="text-warm-600 dark:text-brand-400 text-sm font-semibold mt-1">
                               NT${Number(p.price).toLocaleString()}
                             </p>
                           </div>
@@ -189,18 +189,18 @@ export default function Purchase() {
                               type="button"
                               onClick={() => setQty(p.id, -1)}
                               disabled={qty === 0}
-                              className="w-7 h-7 rounded-lg border border-white/10 text-gray-400 hover:border-brand-500/50 hover:text-brand-400 disabled:opacity-30 transition-all flex items-center justify-center text-lg leading-none"
+                              className="w-7 h-7 rounded-lg border border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-400 hover:border-warm-500/50 hover:text-warm-500 dark:hover:border-brand-500/50 dark:hover:text-brand-400 disabled:opacity-30 transition-all flex items-center justify-center text-lg leading-none"
                             >
                               −
                             </button>
-                            <span className={`w-5 text-center text-sm font-medium ${qty > 0 ? 'text-white' : 'text-gray-500'}`}>
+                            <span className={`w-5 text-center text-sm font-medium ${qty > 0 ? 'text-gray-900 dark:text-white' : 'text-gray-500'}`}>
                               {qty}
                             </span>
                             <button
                               type="button"
                               onClick={() => setQty(p.id, 1)}
                               disabled={qty >= 99}
-                              className="w-7 h-7 rounded-lg border border-white/10 text-gray-400 hover:border-brand-500/50 hover:text-brand-400 disabled:opacity-30 transition-all flex items-center justify-center text-lg leading-none"
+                              className="w-7 h-7 rounded-lg border border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-400 hover:border-warm-500/50 hover:text-warm-500 dark:hover:border-brand-500/50 dark:hover:text-brand-400 disabled:opacity-30 transition-all flex items-center justify-center text-lg leading-none"
                             >
                               ＋
                             </button>
@@ -215,25 +215,25 @@ export default function Purchase() {
 
             {/* 訂單摘要 */}
             <div className="glass rounded-2xl p-6 lg:sticky lg:top-24">
-              <h2 className="font-semibold text-white mb-4">{c.order_summary_title || '訂單摘要'}</h2>
+              <h2 className="font-semibold text-gray-900 dark:text-white mb-4">{c.order_summary_title || '訂單摘要'}</h2>
               {selectedItems.length === 0 ? (
                 <p className="text-gray-500 text-sm text-center py-4">尚未選擇任何商品</p>
               ) : (
                 <div className="space-y-2">
                   {selectedItems.map(({ product, qty }) => (
                     <div key={product.id} className="flex justify-between text-sm">
-                      <span className="text-gray-300 truncate max-w-[60%]">
+                      <span className="text-gray-700 dark:text-gray-300 truncate max-w-[60%]">
                         {product.name}
                         <span className="text-gray-500 ml-1">× {qty}</span>
                       </span>
-                      <span className="text-white font-medium">
+                      <span className="text-gray-900 dark:text-white font-medium">
                         NT${(Number(product.price) * qty).toLocaleString()}
                       </span>
                     </div>
                   ))}
-                  <div className="flex justify-between text-base font-semibold pt-3 border-t border-white/10">
-                    <span className="text-white">{c.label_total || '總計'}</span>
-                    <span className="text-brand-400">NT${totalPrice.toLocaleString()}</span>
+                  <div className="flex justify-between text-base font-semibold pt-3 border-t border-gray-200 dark:border-white/10">
+                    <span className="text-gray-900 dark:text-white">{c.label_total || '總計'}</span>
+                    <span className="text-warm-600 dark:text-brand-400">NT${totalPrice.toLocaleString()}</span>
                   </div>
                 </div>
               )}
@@ -251,7 +251,7 @@ export default function Purchase() {
 
               {contactFields.map((field) => (
                 <div key={field.name}>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     {field.label} <span className="text-red-400">*</span>
                   </label>
                   <input
@@ -260,8 +260,8 @@ export default function Purchase() {
                     value={contact[field.name]}
                     onChange={handleContact}
                     placeholder={field.placeholder}
-                    className={`w-full bg-white/5 border rounded-xl px-4 py-3 text-white placeholder-gray-600 focus:outline-none focus:border-brand-500 transition-colors ${
-                      errors[field.name] ? 'border-red-500/50' : 'border-white/10'
+                    className={`w-full bg-gray-50 dark:bg-white/5 border rounded-xl px-4 py-3 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-warm-500 dark:focus:border-brand-500 transition-colors ${
+                      errors[field.name] ? 'border-red-500/50' : 'border-gray-200 dark:border-white/10'
                     }`}
                   />
                   {errors[field.name] && (
@@ -271,7 +271,7 @@ export default function Purchase() {
               ))}
 
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   {c.label_address || '收件地址'} <span className="text-red-400">*</span>
                 </label>
                 <textarea
@@ -280,8 +280,8 @@ export default function Purchase() {
                   onChange={handleContact}
                   placeholder={c.placeholder_address || '請輸入完整收件地址（含縣市、鄉鎮、路名、門牌號碼）'}
                   rows={3}
-                  className={`w-full bg-white/5 border rounded-xl px-4 py-3 text-white placeholder-gray-600 focus:outline-none focus:border-brand-500 transition-colors resize-none ${
-                    errors.shipping_address ? 'border-red-500/50' : 'border-white/10'
+                  className={`w-full bg-gray-50 dark:bg-white/5 border rounded-xl px-4 py-3 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-warm-500 dark:focus:border-brand-500 transition-colors resize-none ${
+                    errors.shipping_address ? 'border-red-500/50' : 'border-gray-200 dark:border-white/10'
                   }`}
                 />
                 {errors.shipping_address && (
@@ -290,14 +290,14 @@ export default function Purchase() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">{c.label_notes || '備註（選填）'}</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{c.label_notes || '備註（選填）'}</label>
                 <textarea
                   name="notes"
                   value={contact.notes}
                   onChange={handleContact}
                   placeholder={c.placeholder_notes || '有任何特殊需求請填寫於此'}
                   rows={2}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-600 focus:outline-none focus:border-brand-500 transition-colors resize-none"
+                  className="w-full bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-4 py-3 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-warm-500 dark:focus:border-brand-500 transition-colors resize-none"
                 />
               </div>
 

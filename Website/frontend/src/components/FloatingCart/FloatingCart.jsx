@@ -38,20 +38,20 @@ export default function FloatingCart() {
 
       {/* ── 迷你購物車面板 ── */}
       {open && (
-        <div className="w-80 bg-gray-900 border border-white/10 rounded-2xl shadow-2xl overflow-hidden animate-fade-in">
+        <div className="w-80 bg-white border border-gray-200 rounded-2xl shadow-2xl overflow-hidden animate-fade-in dark:bg-gray-900 dark:border-white/10">
           {/* 標題列 */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-white/5">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50 dark:border-white/10 dark:bg-white/5">
             <div className="flex items-center gap-2">
-              <svg className="w-4 h-4 text-brand-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 text-warm-600 dark:text-brand-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
               </svg>
-              <span className="text-sm font-semibold text-white">購物車</span>
-              <span className="text-xs text-gray-400">（{totalItems} 件）</span>
+              <span className="text-sm font-semibold text-gray-900 dark:text-white">購物車</span>
+              <span className="text-xs text-gray-600 dark:text-gray-400">（{totalItems} 件）</span>
             </div>
             <button
               onClick={() => setOpen(false)}
-              className="text-gray-500 hover:text-white transition-colors"
+              className="text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -67,11 +67,11 @@ export default function FloatingCart() {
                 購物車是空的
               </div>
             ) : (
-              <ul className="divide-y divide-white/5">
+              <ul className="divide-y divide-gray-100 dark:divide-white/5">
                 {itemList.map(({ product, qty }) => (
                   <li key={product.id} className="flex items-center gap-3 px-4 py-3">
                     {/* 商品縮圖或佔位 */}
-                    <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center text-xl flex-shrink-0 overflow-hidden">
+                    <div className="w-10 h-10 rounded-lg bg-gray-50 dark:bg-white/5 flex items-center justify-center text-xl flex-shrink-0 overflow-hidden">
                       {product.image
                         ? <img src={product.image} alt={product.name} className="w-full h-full object-cover" />
                         : '🥽'}
@@ -79,8 +79,8 @@ export default function FloatingCart() {
 
                     {/* 商品名稱與價格 */}
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-white truncate">{product.name}</p>
-                      <p className="text-xs text-brand-400 mt-0.5">
+                      <p className="text-xs font-medium text-gray-900 dark:text-white truncate">{product.name}</p>
+                      <p className="text-xs text-warm-600 dark:text-brand-400 mt-0.5">
                         NT${(Number(product.price) * qty).toLocaleString()}
                       </p>
                     </div>
@@ -90,15 +90,15 @@ export default function FloatingCart() {
                       <button
                         onClick={() => setQty(product.id, qty - 1)}
                         disabled={qty <= 1}
-                        className="w-6 h-6 rounded-md border border-white/10 text-gray-400 hover:border-brand-500/50 hover:text-brand-400 disabled:opacity-30 transition-all flex items-center justify-center text-sm"
+                        className="w-6 h-6 rounded-md border border-gray-200 text-gray-600 dark:border-white/10 hover:border-warm-500/50 hover:text-warm-500 dark:hover:border-brand-500/50 dark:hover:text-brand-400 disabled:opacity-30 transition-all flex items-center justify-center text-sm"
                       >
                         −
                       </button>
-                      <span className="w-5 text-center text-xs font-medium text-white">{qty}</span>
+                      <span className="w-5 text-center text-xs font-medium text-gray-900 dark:text-white">{qty}</span>
                       <button
                         onClick={() => setQty(product.id, qty + 1)}
                         disabled={qty >= 99}
-                        className="w-6 h-6 rounded-md border border-white/10 text-gray-400 hover:border-brand-500/50 hover:text-brand-400 disabled:opacity-30 transition-all flex items-center justify-center text-sm"
+                        className="w-6 h-6 rounded-md border border-gray-200 text-gray-600 dark:border-white/10 hover:border-warm-500/50 hover:text-warm-500 dark:hover:border-brand-500/50 dark:hover:text-brand-400 disabled:opacity-30 transition-all flex items-center justify-center text-sm"
                       >
                         ＋
                       </button>
@@ -107,7 +107,7 @@ export default function FloatingCart() {
                     {/* 移除按鈕 */}
                     <button
                       onClick={() => removeItem(product.id)}
-                      className="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
+                      className="text-gray-400 dark:text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
                       title="移除"
                     >
                       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -122,10 +122,10 @@ export default function FloatingCart() {
 
           {/* 底部：總計 + 結帳按鈕 */}
           {itemList.length > 0 && (
-            <div className="px-4 py-3 border-t border-white/10 bg-white/[0.02]">
+            <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 dark:border-white/10 dark:bg-white/[0.02]">
               <div className="flex justify-between items-center mb-3">
-                <span className="text-xs text-gray-400">總計</span>
-                <span className="text-base font-bold text-brand-400">
+                <span className="text-xs text-gray-600 dark:text-gray-400">總計</span>
+                <span className="text-base font-bold text-warm-600 dark:text-brand-400">
                   NT${totalPrice.toLocaleString()}
                 </span>
               </div>
@@ -146,7 +146,7 @@ export default function FloatingCart() {
         className={`relative w-14 h-14 rounded-full shadow-2xl flex items-center justify-center transition-all duration-200 active:scale-95 ${
           open
             ? 'bg-brand-600 ring-2 ring-brand-400/50'
-            : 'bg-gray-800 border border-white/10 hover:bg-gray-700 hover:border-brand-500/30'
+            : 'bg-gray-200 border border-gray-300 hover:bg-gray-300 hover:border-warm-500/30 dark:bg-gray-800 dark:border-white/10 dark:hover:bg-gray-700 dark:hover:border-brand-500/30'
         }`}
         title="購物車"
       >

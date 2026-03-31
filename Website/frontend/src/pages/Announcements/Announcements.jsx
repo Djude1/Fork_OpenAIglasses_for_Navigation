@@ -76,7 +76,7 @@ export default function Announcements() {
 
   // ── 渲染 ──────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950">
+    <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-white dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
       {/* ── Hero 區塊 ───────────────────────────────────────────── */}
       <div className="relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-r from-blue-600/10 to-purple-600/10" />
@@ -89,7 +89,7 @@ export default function Announcements() {
           {/* 返回首頁 */}
           <Link
             to="/"
-            className="inline-flex items-center gap-2 text-gray-400 hover:text-white text-sm mb-8 transition-colors"
+            className="inline-flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm mb-8 transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
@@ -105,10 +105,10 @@ export default function Announcements() {
               </svg>
               最新消息
             </div>
-            <h1 className="text-3xl sm:text-4xl font-bold text-white mb-4">
+            <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">
               公告中心
             </h1>
-            <p className="text-gray-400 text-lg max-w-2xl mx-auto">
+            <p className="text-gray-600 dark:text-gray-400 text-lg max-w-2xl mx-auto">
               查看產品更新、系統維護通知與最新功能公告
             </p>
           </div>
@@ -126,7 +126,7 @@ export default function Announcements() {
               className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
                 selectedTag === null
                   ? 'bg-blue-500 text-white'
-                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
+                  : 'bg-gray-200 text-gray-600 hover:bg-gray-300 hover:text-gray-900 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white'
               }`}
             >
               全部
@@ -137,8 +137,8 @@ export default function Announcements() {
                 onClick={() => setSelectedTag(tag.slug)}
                 className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
                   selectedTag === tag.slug
-                    ? 'text-white ring-2 ring-offset-2 ring-offset-gray-900'
-                    : 'text-gray-400 hover:text-white'
+                    ? 'text-white ring-2 ring-offset-2 ring-offset-white dark:ring-offset-gray-900'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
                 }`}
                 style={{
                   backgroundColor: selectedTag === tag.slug
@@ -159,12 +159,12 @@ export default function Announcements() {
           </div>
         ) : announcements.length === 0 ? (
           <div className="text-center py-20">
-            <svg className="w-16 h-16 text-gray-700 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-16 h-16 text-gray-400 dark:text-gray-700 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
                 d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
             </svg>
             <p className="text-gray-500 text-lg">目前沒有公告</p>
-            <p className="text-gray-600 text-sm mt-2">請稍後再查看最新消息</p>
+            <p className="text-gray-400 dark:text-gray-600 text-sm mt-2">請稍後再查看最新消息</p>
           </div>
         ) : (
           <div className="space-y-4">
@@ -175,7 +175,7 @@ export default function Announcements() {
               return (
                 <article
                   key={item.id}
-                  className="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-2xl overflow-hidden hover:border-gray-700 transition-colors"
+                  className="bg-gray-50 backdrop-blur-sm border border-gray-200 rounded-2xl overflow-hidden hover:border-gray-300 dark:bg-gray-900/50 dark:border-gray-800 dark:hover:border-gray-700 transition-colors"
                 >
                   {/* 卡片標頭 */}
                   <div
@@ -192,7 +192,7 @@ export default function Announcements() {
 
                       <div className="flex-1 min-w-0">
                         {/* 標題 */}
-                        <h2 className="text-lg font-semibold text-white mb-2 leading-tight">
+                        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2 leading-tight">
                           {item.title}
                         </h2>
 
@@ -242,13 +242,13 @@ export default function Announcements() {
 
                   {/* 展開內容 */}
                   {isExpanded && (
-                    <div className="px-5 pb-5 border-t border-gray-800">
-                      <div className="pt-4 text-gray-300 leading-relaxed whitespace-pre-wrap">
+                    <div className="px-5 pb-5 border-t border-gray-200 dark:border-gray-800">
+                      <div className="pt-4 text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">
                         {item.body}
                       </div>
 
                       {item.scheduled_at && (
-                        <div className="mt-4 pt-4 border-t border-gray-800">
+                        <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-800">
                           <p className="text-xs text-gray-500">
                             排程發布時間：{fmtDateTime(item.scheduled_at)}
                           </p>
@@ -265,7 +265,7 @@ export default function Announcements() {
         {/* 底部提示 */}
         {!loading && announcements.length > 0 && (
           <div className="mt-12 text-center">
-            <p className="text-gray-600 text-sm">
+            <p className="text-gray-400 dark:text-gray-600 text-sm">
               已顯示全部 {announcements.length} 則公告
             </p>
           </div>

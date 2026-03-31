@@ -21,24 +21,24 @@ function ProductList({ c }) {
     <div className="pt-16">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-20">
         {/* 麵包屑 */}
-        <Link to="/" className="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-brand-400 transition-colors mb-10">
+        <Link to="/" className="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 hover:text-warm-500 dark:hover:text-brand-400 transition-colors mb-10">
           <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
           {c.back_link || '返回首頁'}
         </Link>
 
-        <h1 className="text-4xl font-bold text-white mb-3">{c.list_title || '所有產品'}</h1>
-        <p className="text-gray-400 mb-10">{c.list_subtitle || '點擊產品卡片查看詳細規格與 3D 預覽'}</p>
+        <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-3">{c.list_title || '所有產品'}</h1>
+        <p className="text-gray-600 dark:text-gray-400 mb-10">{c.list_subtitle || '點擊產品卡片查看詳細規格與 3D 預覽'}</p>
 
         {loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="glass rounded-2xl p-6 animate-pulse">
-                <div className="h-48 bg-white/5 rounded-xl mb-4" />
-                <div className="h-5 bg-white/10 rounded w-2/3 mb-2" />
-                <div className="h-3 bg-white/5 rounded w-full mb-4" />
-                <div className="h-8 bg-white/10 rounded w-1/3" />
+                <div className="h-48 bg-gray-100/5 dark:bg-white/5 rounded-xl mb-4" />
+                <div className="h-5 bg-gray-200/10 dark:bg-white/10 rounded w-2/3 mb-2" />
+                <div className="h-3 bg-gray-100/5 dark:bg-white/5 rounded w-full mb-4" />
+                <div className="h-8 bg-gray-200/10 dark:bg-white/10 rounded w-1/3" />
               </div>
             ))}
           </div>
@@ -56,21 +56,21 @@ function ProductList({ c }) {
                 {p.image ? (
                   <img src={p.image} alt={p.name} className="w-full h-48 object-cover" />
                 ) : (
-                  <div className="w-full h-48 flex items-center justify-center bg-white/5 text-6xl">
+                  <div className="w-full h-48 flex items-center justify-center bg-gray-100/5 dark:bg-white/5 text-6xl">
                     🥽
                   </div>
                 )}
                 <div className="p-6 flex flex-col flex-1">
                   <div className="flex items-center gap-2 mb-3">
                     <span className="w-1.5 h-1.5 bg-green-400 rounded-full" />
-                    <span className="text-xs text-brand-400">{c.availability || '現貨供應中'}</span>
+                    <span className="text-xs text-warm-600 dark:text-brand-400">{c.availability || '現貨供應中'}</span>
                   </div>
-                  <h2 className="text-lg font-bold text-white mb-2 group-hover:text-brand-400 transition-colors">
+                  <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-2 group-hover:text-warm-500 dark:group-hover:text-brand-400 transition-colors">
                     {p.name}
                   </h2>
-                  <p className="text-gray-400 text-sm leading-relaxed flex-1">{p.short_description}</p>
+                  <p className="text-gray-600 dark:text-gray-400 text-sm leading-relaxed flex-1">{p.short_description}</p>
                   <div className="mt-4 flex items-end gap-3">
-                    <span className="text-2xl font-bold text-brand-400">
+                    <span className="text-2xl font-bold text-warm-600 dark:text-brand-400">
                       NT${Number(p.price).toLocaleString()}
                     </span>
                     {p.original_price && (
@@ -159,7 +159,7 @@ function ProductDetail({ id, c }) {
     <div className="pt-16">
       {/* 麵包屑導航 */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
-        <Link to="/product" className="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-brand-400 transition-colors">
+        <Link to="/product" className="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 hover:text-warm-500 dark:hover:text-brand-400 transition-colors">
           <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
@@ -183,16 +183,16 @@ function ProductDetail({ id, c }) {
 
             {/* 產品資訊 */}
             <div>
-              <div className="inline-flex items-center gap-2 text-xs text-brand-400 glass rounded-full px-3 py-1 mb-4">
+              <div className="inline-flex items-center gap-2 text-xs text-warm-600 dark:text-brand-400 glass rounded-full px-3 py-1 mb-4">
                 <span className="w-1.5 h-1.5 bg-green-400 rounded-full" />
                 {c.availability || '現貨供應中'}
               </div>
-              <h1 className="text-4xl font-bold text-white mb-3">{displayProduct.name}</h1>
-              <p className="text-gray-400 text-lg mb-6">{displayProduct.short_description}</p>
+              <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-3">{displayProduct.name}</h1>
+              <p className="text-gray-600 dark:text-gray-400 text-lg mb-6">{displayProduct.short_description}</p>
 
               {/* 價格 */}
               <div className="flex items-end gap-4 mb-8">
-                <span className="text-4xl font-bold text-brand-400">
+                <span className="text-4xl font-bold text-warm-600 dark:text-brand-400">
                   NT${Number(displayProduct.price).toLocaleString()}
                 </span>
                 {displayProduct.original_price && (
@@ -201,7 +201,7 @@ function ProductDetail({ id, c }) {
                   </span>
                 )}
                 {displayProduct.original_price && (
-                  <span className="bg-red-500/20 text-red-400 text-sm font-semibold px-2 py-1 rounded-lg">
+                  <span className="bg-red-500/20 text-red-600 dark:text-red-400 text-sm font-semibold px-2 py-1 rounded-lg">
                     省 NT${(Number(displayProduct.original_price) - Number(displayProduct.price)).toLocaleString()}
                   </span>
                 )}
@@ -224,7 +224,7 @@ function ProductDetail({ id, c }) {
                   className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border text-sm font-semibold transition-all duration-200 ${
                     added
                       ? 'border-green-500/50 bg-green-500/10 text-green-400'
-                      : 'border-white/20 bg-white/5 text-white hover:border-brand-500/50 hover:bg-brand-500/10 hover:text-brand-400'
+                      : 'border-gray-300 bg-gray-100 dark:border-white/20 dark:bg-white/5 text-gray-900 dark:text-white hover:border-warm-500/50 dark:hover:border-brand-500/50 hover:bg-warm-500/10 dark:hover:bg-brand-500/10 hover:text-warm-500 dark:hover:text-brand-400'
                   }`}
                 >
                   {added ? (
@@ -258,7 +258,7 @@ function ProductDetail({ id, c }) {
               </div>
 
               {/* 標籤頁 */}
-              <div className="border-b border-white/10 mb-6">
+              <div className="border-b border-gray-200 dark:border-white/10 mb-6">
                 <div className="flex gap-6">
                   {['features', 'specs', 'description'].map((tab) => (
                     <button
@@ -266,8 +266,8 @@ function ProductDetail({ id, c }) {
                       onClick={() => setActiveTab(tab)}
                       className={`pb-3 text-sm font-medium transition-all border-b-2 -mb-px ${
                         activeTab === tab
-                          ? 'text-brand-400 border-brand-400'
-                          : 'text-gray-500 border-transparent hover:text-gray-300'
+                          ? 'text-warm-600 dark:text-brand-400 border-warm-500 dark:border-brand-400'
+                          : 'text-gray-600 dark:text-gray-400 border-transparent hover:text-gray-600 dark:hover:text-gray-300'
                       }`}
                     >
                       {tabLabels[tab]}
@@ -281,10 +281,10 @@ function ProductDetail({ id, c }) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {displayProduct.features.length > 0 ? (
                     displayProduct.features.map((feature) => (
-                      <div key={feature.id} className="glass rounded-xl p-4 hover:border-brand-500/30 transition-all">
+                      <div key={feature.id} className="glass rounded-xl p-4 hover:border-warm-500/30 dark:hover:border-brand-500/30 transition-all">
                         <div className="text-2xl mb-2">{feature.icon}</div>
-                        <h3 className="font-semibold text-white text-sm mb-1">{feature.title}</h3>
-                        <p className="text-gray-400 text-xs leading-relaxed">{feature.description}</p>
+                        <h3 className="font-semibold text-gray-900 dark:text-white text-sm mb-1">{feature.title}</h3>
+                        <p className="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">{feature.description}</p>
                       </div>
                     ))
                   ) : (
@@ -298,9 +298,9 @@ function ProductDetail({ id, c }) {
                 <div className="space-y-2">
                   {displayProduct.specs.length > 0 ? (
                     displayProduct.specs.map((spec) => (
-                      <div key={spec.id} className="flex items-center justify-between py-2 border-b border-white/5">
-                        <span className="text-gray-400 text-sm">{spec.key}</span>
-                        <span className="text-white text-sm font-medium">{spec.value}</span>
+                      <div key={spec.id} className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-white/5">
+                        <span className="text-gray-600 dark:text-gray-400 text-sm">{spec.key}</span>
+                        <span className="text-gray-900 dark:text-white text-sm font-medium">{spec.value}</span>
                       </div>
                     ))
                   ) : (
@@ -311,7 +311,7 @@ function ProductDetail({ id, c }) {
 
               {/* 詳細說明 */}
               {activeTab === 'description' && (
-                <p className="text-gray-400 leading-relaxed whitespace-pre-line">
+                <p className="text-gray-600 dark:text-gray-400 leading-relaxed whitespace-pre-line">
                   {displayProduct.description}
                 </p>
               )}

@@ -24,27 +24,27 @@ export default function Download() {
           </div>
 
           <h1 className="text-4xl md:text-5xl font-bold mb-6">
-            <span className="text-white">{c.hero_title_1 || '配套 APP'}</span>
+            <span className="text-gray-900 dark:text-white">{c.hero_title_1 || '配套 APP'}</span>
             <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-400 to-brand-600">
-              {c.hero_title_2 || '解鎖眼鏡完整功能'}
+<span className="text-transparent bg-clip-text bg-gradient-to-r from-warm-400 to-warm-600 dark:from-brand-400 dark:to-brand-600">
+              {c.hero_title_2 || '解锁眼镜完整功能'}
             </span>
           </h1>
 
-          <p className="text-gray-400 text-lg max-w-2xl mx-auto mb-10">
+          <p className="text-gray-600 dark:text-gray-400 text-lg max-w-2xl mx-auto mb-10">
             {c.hero_description || '透過 AI Glasses 配套 APP，輕鬆完成設備配對、AI 設定與導航控制，讓您的智慧眼鏡發揮 100% 效能。'}
           </p>
 
           {/* 主要下載卡片 */}
           <div className="max-w-md mx-auto glass rounded-3xl p-8 glow-border">
             {/* APP icon 佔位 */}
-            <div className="w-24 h-24 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center shadow-lg shadow-brand-500/30">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="w-24 h-24 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-warm-500 to-warm-700 dark:from-brand-500 dark:to-brand-700 flex items-center justify-center shadow-lg shadow-warm-500/30 dark:shadow-brand-500/30">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12 text-gray-900 dark:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
               </svg>
             </div>
 
-            <h2 className="text-xl font-bold text-white mb-1">{c.app_name || 'AI Glasses 配套 APP'}</h2>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-1">{c.app_name || 'AI Glasses 配套 APP'}</h2>
             <p className="text-gray-500 text-sm mb-2">
               版本 {c.app_version || '1.0.0'}  ·  {c.app_requirement || 'Android 8.0 以上'}
             </p>
@@ -71,36 +71,36 @@ export default function Download() {
               {c.btn_download || '下載 Android APK'}
             </a>
 
-            <p className="text-xs text-gray-600 mt-4">
-              {c.hardware_note || '需搭配 AI 導航智慧眼鏡硬體使用。'}
-              <Link to="/purchase" className="text-brand-400 hover:text-brand-300 ml-1">
+<p className="text-xs text-gray-400 dark:text-gray-600 mt-4">
+              {c.hardware_note || '需搭配 AI 导航智慧眼镜硬件使用。'}
+              <Link to="/purchase" className="text-warm-600 dark:text-brand-400 hover:text-warm-400 dark:hover:text-brand-300 ml-1">
                 {c.hardware_link_text || '購買硬體'}
               </Link>
             </p>
           </div>
 
           {/* iOS 說明 */}
-          <p className="text-gray-600 text-sm mt-6">{c.ios_note || 'iOS 版本開發中，敬請期待。'}</p>
+          <p className="text-gray-400 dark:text-gray-600 text-sm mt-6">{c.ios_note || 'iOS 版本開發中，敬請期待。'}</p>
         </div>
       </section>
 
       {/* 功能特色 */}
-      <section className="py-20 bg-gray-900/50">
+<section className="py-20 bg-gray-50 dark:bg-gray-900/50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <h2 className="section-title">{c.features_title || 'APP 核心功能'}</h2>
           <p className="section-subtitle">
-            {c.features_subtitle || '從設備配對到 AI 設定，一支 APP 完整管理您的智慧眼鏡。'}
+            {c.features_subtitle || '从设备配对到 AI 设定，一支 APP 完整管理您的智慧眼镜。'}
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {features.map((f) => (
               <div key={f.id || f.title} className="glass rounded-2xl p-6 hover:glow-border transition-all duration-300 group">
-                <div className="w-12 h-12 rounded-xl bg-brand-500/10 text-brand-400 flex items-center justify-center mb-4 group-hover:bg-brand-500/20 transition-colors">
+                <div className="w-12 h-12 rounded-xl bg-warm-500/10 dark:bg-brand-500/10 text-warm-600 dark:text-brand-400 flex items-center justify-center mb-4 group-hover:bg-warm-500/20 dark:group-hover:bg-brand-500/20 transition-colors">
                   <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d={f.icon_svg} />
                   </svg>
                 </div>
-                <h3 className="font-semibold text-white mb-2 group-hover:text-brand-400 transition-colors">{f.title}</h3>
-                <p className="text-gray-400 text-sm leading-relaxed">{f.description}</p>
+                <h3 className="font-semibold text-gray-900 dark:text-white mb-2 group-hover:text-warm-500 dark:group-hover:text-brand-400 transition-colors">{f.title}</h3>
+                <p className="text-gray-600 dark:text-gray-400 text-sm leading-relaxed">{f.description}</p>
               </div>
             ))}
           </div>
@@ -115,12 +115,12 @@ export default function Download() {
           <div className="space-y-6">
             {steps.map((step) => (
               <div key={step.id || step.step_number} className="flex gap-6 items-start glass rounded-2xl p-6">
-                <div className="text-3xl font-bold text-brand-500/30 font-mono shrink-0 w-12 text-center">
+                <div className="text-3xl font-bold text-warm-500/30 dark:text-brand-500/30 font-mono shrink-0 w-12 text-center">
                   {step.step_number}
                 </div>
                 <div>
-                  <h3 className="font-semibold text-white mb-1">{step.title}</h3>
-                  <p className="text-gray-400 text-sm leading-relaxed">{step.description}</p>
+                  <h3 className="font-semibold text-gray-900 dark:text-white mb-1">{step.title}</h3>
+                  <p className="text-gray-600 dark:text-gray-400 text-sm leading-relaxed">{step.description}</p>
                 </div>
               </div>
             ))}
@@ -129,11 +129,11 @@ export default function Download() {
       </section>
 
       {/* CTA */}
-      <section className="py-20 bg-gray-900/50">
+      <section className="py-20 bg-gray-50 dark:bg-gray-900/50">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <div className="glass rounded-3xl p-10 glow-border">
-            <h2 className="text-2xl md:text-3xl font-bold mb-4">{c.cta_title || '還沒有智慧眼鏡？'}</h2>
-            <p className="text-gray-400 mb-8">{c.cta_description || '先購買硬體，再下載 APP，即可開始體驗 AI 穿戴未來。'}</p>
+            <h2 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white mb-4">{c.cta_title || '還沒有智慧眼鏡？'}</h2>
+            <p className="text-gray-600 dark:text-gray-400 mb-8">{c.cta_description || '先購買硬體，再下載 APP，即可開始體驗 AI 穿戴未來。'}</p>
             <div className="flex flex-wrap gap-4 justify-center">
               <Link to="/purchase" className="btn-primary">{c.cta_btn_buy || '立即購買眼鏡'}</Link>
               <Link to="/product" className="btn-outline">{c.cta_btn_specs || '查看產品規格'}</Link>
