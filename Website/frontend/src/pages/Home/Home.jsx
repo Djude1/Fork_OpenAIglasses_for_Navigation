@@ -144,9 +144,11 @@ export default function Home() {
           </div>
 
           {/* 右側 3D 模型（固定高度避免重繪跳位） */}
-          <div className="h-[360px] lg:h-[460px] flex-shrink-0">
-            <div className="w-full h-full">
-              <ModelViewer modelUrl={modelUrl} className="w-full h-full" />
+          {/* 日間模式模糊圓圈背景裝飾：讓白色商品在灰底上更突出 */}
+          <div className="h-[360px] lg:h-[460px] flex-shrink-0 relative">
+            <div className="absolute inset-0 m-auto w-72 h-72 bg-gray-200/20 dark:bg-transparent rounded-full blur-3xl pointer-events-none" />
+            <div className="w-full h-full relative z-10">
+              <ModelViewer modelUrl={modelUrl} cameraHeight={currentProduct?.camera_height} className="w-full h-full" />
             </div>
             <p className="text-center text-xs text-gray-400 dark:text-gray-600 mt-2">
               {c.model_hint || '拖曳旋轉 · 滾輪縮放'}

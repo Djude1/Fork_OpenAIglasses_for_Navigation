@@ -173,8 +173,10 @@ function ProductDetail({ id, c }) {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-start">
             {/* 3D 模型檢視 */}
             <div className="lg:sticky lg:top-24">
-              <div className="h-[300px] glass rounded-3xl overflow-hidden glow-border">
-                <ModelViewer modelUrl={modelUrl} className="w-full h-full" />
+              <div className="h-[300px] glass rounded-3xl overflow-hidden glow-border relative">
+                {/* 日間模式模糊圓圈背景：讓白色商品突出 */}
+                <div className="absolute inset-0 m-auto w-48 h-64 bg-gray-200/30 dark:bg-transparent rounded-full blur-3xl pointer-events-none" />
+                <ModelViewer modelUrl={modelUrl} cameraHeight={product?.camera_height} className="w-full h-full" />
               </div>
               <p className="text-center text-xs text-gray-500 mt-3">
                 {c.model_hint || '可互動 3D 預覽 · 拖曳旋轉 · 滾輪縮放'}

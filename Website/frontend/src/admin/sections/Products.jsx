@@ -21,7 +21,7 @@ function Field({ label, value, onChange, multiline, type = 'text' }) {
   )
 }
 
-const emptyProduct = { name: '', short_description: '', description: '', price: '', original_price: '', stock: 0, is_active: true }
+const emptyProduct = { name: '', short_description: '', description: '', price: '', original_price: '', stock: 0, is_active: true, camera_height: 0.5 }
 
 export default function Products() {
   const [products, setProducts]         = useState([])
@@ -207,6 +207,7 @@ export default function Products() {
                   <Field label="售價" value={editForm.price} onChange={v => setEditForm(p => ({...p, price: v}))} type="number" />
                   <Field label="原價" value={editForm.original_price} onChange={v => setEditForm(p => ({...p, original_price: v}))} type="number" />
                 </div>
+                <Field label="攝影機高度（Y 軸，預設 0.5）" value={editForm.camera_height ?? 0.5} onChange={v => setEditForm(p => ({...p, camera_height: Number(v)}))} type="number" />
                 <Field label="簡短描述" value={editForm.short_description} onChange={v => setEditForm(p => ({...p, short_description: v}))} />
                 <Field label="詳細描述" value={editForm.description} onChange={v => setEditForm(p => ({...p, description: v}))} multiline />
                 <div className="mb-4 flex items-center gap-2">
