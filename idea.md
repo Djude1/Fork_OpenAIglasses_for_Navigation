@@ -98,13 +98,15 @@ return cleanBase.replaceFirst(RegExp(r'^https?://'), '$wsSchemeToUse://') + path
 
 ---
 
-### Docker Port 9999 無法綁定（已修復）
+### Docker Port 設定整理（已修復）
 
-**症狀**：`docker compose up` 失敗，`Ports are not available: exposing port TCP 0.0.0.0:9999`
+**最終設定**：`Website/docker-compose.yml` nginx 只保留 `- "8888:80"`
 
-**原因**：Windows Hyper-V 保留了 9999 port，且 `docker-compose.yml` 重複 mapping（8080:80 和 9999:80 都指向 nginx:80）
+**歷史**：曾有 9999（Hyper-V 保留，無法綁定）、8080、6666 等不同設定，統一改為 8888
 
-**修復**：`Website/docker-compose.yml` 移除多餘的 `- "9999:80"` 行，只保留 `- "8080:80"`
+**Port 分工**：
+- `8888` → nginx（網站入口，Docker 容器）
+- `8081～8084` → FastAPI 各裝置 instance（直接跑在主機）
 
 ---
 
@@ -123,6 +125,28 @@ return cleanBase.replaceFirst(RegExp(r'^https?://'), '$wsSchemeToUse://') + path
 - Django API：`Website/backend/content/admin_views.py` `AdminContentSectionView`（`app-config` section）
 - React UI：`Website/frontend/src/admin/sections/ServerConfig.jsx`（新增）
 - Flutter 讀取：`Android/lib/screens/splash_screen.dart` `fetchServerConfigFromWebsite()`
+
+---
+
+## 專案清理紀錄（2026-04-02）
+
+### 已刪除的冗餘檔案
+| 檔案/目錄 | 原因 |
+|-----------|------|
+| `朋友更新/` | 朋友貢獻的程式碼快照，已被主分支吸收 |
+| `Website/原專案的CODE/` | 原始 HTML/JS，已被 React 取代 |
+| `compile/自己用` | 舊版韌體，硬編碼 IP，已被 compile.ino 取代 |
+| `compile/輩分節` | 同上 |
+| `mobileclip2_b.ts`（243MB） | 主專案未使用（ultralytics 遺留），已刪除 |
+| `mobileclip_blt.ts`（572MB） | 同上，共釋放 815MB |
+| `download_models.py` | 模型已就位，腳本用途已達成 |
+| `music/歡迎使用AI智慧眼鏡.wav.bak` | .bak 備份，原始 .wav 保留 |
+| `yollo_E/`（1.3GB） | 已被 yolomedia.py 整合取代的舊子專案 |
+
+### .gitignore 新增項目
+- `Website/downloads/` — 防止 APK 誤 commit
+- `*.apk`
+- `mobileclip2_b.ts`
 
 ---
 
