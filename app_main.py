@@ -31,7 +31,6 @@ if sys.platform.startswith("win"):
 
 # ── 從 config.py 讀取所有設定（.env 已在 config.py 中載入）──────────────────
 from config import (
-    GROQ_API_KEY,
     GOOGLE_CREDENTIALS_PATH,
     SAMPLE_RATE,
     CHUNK_MS,
@@ -54,7 +53,6 @@ from audio_stream import (
 from omni_client import stream_chat, OmniStreamPiece, generate_text_async
 from asr_core import (
     ASRCallback,
-    GroqASR,    # 保留備用
     GoogleASR,
     set_current_recognition,
     stop_current_recognition,
