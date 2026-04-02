@@ -104,6 +104,9 @@ desktop.ini
 # ══════════════════════════════════════════════════════
 mobileclip_blt.ts
 mobileclip_*.ts
+mobileclip2_b.ts
+Website/downloads/
+*.apk
 
 # ══════════════════════════════════════════════════════
 # Cloudflare Tunnel（含私鑰，禁止入庫）
