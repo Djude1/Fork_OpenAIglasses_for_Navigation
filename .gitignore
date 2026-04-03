@@ -5,8 +5,11 @@
 .env.*
 # Google 服務帳號私鑰（絕不入庫）
 google_Speech_to_Text.json
+Google_Api_Key.json
 *_service_account*.json
 *credentials*.json
+# testAPI 資料夾含私鑰，整個排除
+testAPI/
 # 說話人聲紋（使用者個人生物特徵資料）
 model/speaker_embed.pkl
 # 備份檔
