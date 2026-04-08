@@ -267,6 +267,40 @@ audio_config = texttospeech.AudioConfig(
 
 ---
 
+## Claude Skills 系統建立（已實作，2026-04-09）
+
+### 決策重點
+- 將所有工作規範拆成獨立 skill 檔，用 `/名稱` 叫出，避免 CLAUDE.md 過長
+- 全域 `~/.claude/commands/`：通用規範（check / delete / pre-commit）
+- 專案 `.claude/commands/`：專案特有規範（check / arch / update-md / app-check / web-test）
+- `.gitignore` 改為只忽略 `.claude/memory/`，讓 `commands/` 可以 push 到 GitHub
+
+### 涉及檔案
+- `.claude/commands/check.md`：TTS / Vertex AI / model_server 專屬驗證
+- `.claude/commands/arch.md`：系統架構速查
+- `.claude/commands/update-md.md`：MD 維護規範（含步驟與格式）
+- `.claude/commands/app-check.md`：Android APP 視障者可用性檢查
+- `.claude/commands/web-test.md`：Website Django+React 完整測試清單（含後端 API 權限驗證）
+- `CLAUDE.md`：精簡為 skill 索引表
+
+---
+
+## 專案清理（已完成，2026-04-09）
+
+### 刪除的檔案
+| 檔案 | 原因 |
+|------|------|
+| `idea.md`（根目錄） | 與 `MD/idea.md` 重複，MD 版本是主版本 |
+| `models.py`（根目錄） | 引用不存在的 `app.cloud.*`，無任何模組使用 |
+| `setup.bat` / `setup.sh` | 使用舊版 `pip install`，專案已改用 `uv` |
+| `yoloe-26l-seg.pt`（根目錄） | `model/` 內已有相同檔案 |
+| `mobileclip_blt.ts` | 72MB，gitignored，不使用 |
+| `Chirp3-HD/`、`docs/` | 空資料夾 |
+| `test_tts_*.py` | 臨時測試腳本，測試已完成 |
+| `MD/tts_test_output.wav` | 測試輸出 |
+
+---
+
 ## 安全性待改善（選擇性）
 
 ### `/device/N/` 攝影機畫面仍然公開
