@@ -9,7 +9,7 @@ import threading
 import queue
 import time
 from audio_stream import broadcast_pcm16_realtime
-from audio_compressor import compressed_audio_cache, AudioCompressor
+from audio_compressor import compressed_audio_cache
 
 # 导入录制器（避免循环导入，在需要时动态导入）
 _recorder_imported = False
@@ -265,7 +265,7 @@ def initialize_audio_system():
     # 显示压缩统计
     if os.getenv("AIGLASS_COMPRESS_AUDIO", "1") == "1":
         stats = compressed_audio_cache.get_compression_stats()
-        print(f"[AUDIO] 音频压缩统计:")
+        print("[AUDIO] 音频压缩统计:")
         print(f"  - 文件数: {stats['files_cached']}")
         print(f"  - 原始大小: {stats['total_original_size'] / 1024:.1f} KB")
         print(f"  - 压缩后: {stats['total_compressed_size'] / 1024:.1f} KB")
