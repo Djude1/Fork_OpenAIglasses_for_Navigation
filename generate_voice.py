@@ -5,6 +5,8 @@
 
 import os
 import sys
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
 import json
 import wave
 import time
@@ -128,6 +130,49 @@ PHRASES = [
     "請停下側移。",
     "向前直行幾步越過障礙物。",
     "已對準，準備切換過馬路模式。",
+
+    # ── 來自 voice_missing_log/2026-04-12.txt ──
+    # 環境描述
+    "6點到9點鐘方向地面有許多",
+    "地面雜物多，請注意絆倒。",
+    "環境凌亂，謹防絆倒。",
+    "環境凌亂，注意腳下。",
+    "路面濕滑，請留意腳",
+    "前方有坡道。",
+    "前方道路無明顯危險。",
+    "前方一個交通錐。",
+    "右側有低矮突出照明燈。",
+    "6點鐘方向有積水。",
+    "9點鐘方向地面有積水。",
+    "前方道路人潮眾多，請",
+    "地面平坦無明顯危險。",
+    "前方有低矮台階，留意絆",
+    "前方人行道邊緣。",
+    "前方有通道口，注意地面材質變化。",
+    "右側有大片玻璃牆面。",
+    "右側有玻璃櫃檯，左側通道",
+    "前方通道較狹窄。",
+    "前方地面有斜坡。",
+    "前方有斑馬線。",
+    "前方有台階。",
+    "正前方有台階邊緣。",
+    "前方路面不平整，注意腳下。",
+    "前方人行道上有行人正在穿越馬路。",
+    "6點鐘方向路面有顏色及高低變化",
+    # 簡體中文殘留（部分 workflow 尚未全面繁體化，先生成對應 WAV 供降級使用）
+    "请向左转动。",
+    "请向右转动。",
+    "方向已对正！现在校准位置。",
+    "请向左平移。",
+    "校准完成！您已在盲道上，开始前行。",
+    "左转",
+    "请向右平移。",
+    "检测到已移动，开始对准新方向。",
+    "左移",
+    "右转",
+    "右移",
+    "请继续向左平移。",
+    "丢失路径，重新搜索。",
 ]
 
 
@@ -205,7 +250,7 @@ def _gemini_tts(text: str, retries: int = 3) -> bytes | None:
             return base64.b64decode(data) if data else None
         except urllib.error.HTTPError as e:
             if e.code == 429:
-                print(f" [429→換Key]", end="")
+                print(" [429→換Key]", end="")
                 _next_key()
                 time.sleep(2)
                 continue
@@ -273,9 +318,20 @@ def main():
         fname = f"{clean}.wav"
         fpath = os.path.join(VOICE_DIR, fname)
 
-        # 已有檔案 → 跳過（加 --force 強制重新生成）
+        # 已有檔案 → 若 map 也有 key 才跳過；若 WAV 存在但 map 缺 key 則補上
         if "--force" not in sys.argv and os.path.exists(fpath) and os.path.getsize(fpath) > 500:
-            print(f"  [跳過] {clean}（已存在）")
+            if clean not in voice_map:
+                # WAV 存在但 map 缺 key → 補上 duration
+                import contextlib
+                dur_ms = 0
+                with contextlib.suppress(Exception):
+                    import wave as _wave
+                    with _wave.open(fpath) as wf:
+                        dur_ms = int(wf.getnframes() / wf.getframerate() * 1000)
+                voice_map[clean] = {"files": [fname], "duration_ms": dur_ms}
+                print(f"  [補 map] {clean}（WAV 已存在，補入 map）")
+            else:
+                print(f"  [跳過] {clean}（已存在）")
             skipped += 1
             continue
 

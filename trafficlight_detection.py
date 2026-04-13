@@ -13,7 +13,6 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 import bridge_io
-from audio_player import play_voice_text  # 使用统一的语音播放接口
 import logging
 
 logger = logging.getLogger(__name__)
@@ -122,7 +121,6 @@ _FONT_PATH = None
 def _init_font():
     global _PIL_OK, _FONT_PATH
     try:
-        from PIL import ImageFont
         _PIL_OK = True
     except Exception:
         _PIL_OK = False
@@ -359,7 +357,7 @@ def main(headless: bool = True, stop_event=None):
                                 
                                 # 转换回OpenCV格式
                                 vis[:] = cv2.cvtColor(np.asarray(pil_img), cv2.COLOR_RGB2BGR)
-                            except Exception as e:
+                            except Exception:
                                 # 【删除】PIL失败时的文本标签
                                 pass
                         else:

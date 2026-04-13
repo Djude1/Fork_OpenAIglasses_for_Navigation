@@ -13,7 +13,6 @@ from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 from collections import deque
 import torch  # 添加这行
-from obstacle_detector_client import ObstacleDetectorClient
 from audio_player import play_voice_text  # 新增
 from crosswalk_awareness import CrosswalkAwarenessMonitor, split_combined_voice  # 斑马线感知
 from gemini_scene_describer import GeminiSceneDescriber  # Gemini 場景補充描述
@@ -537,10 +536,10 @@ class BlindPathNavigator:
             if cross_pixels > 0:
                 logger.info(f"[斑马线] 传入monitor: pixels={cross_pixels}, area={cross_pixels/crosswalk_mask.size*100:.2f}%")
             else:
-                logger.info(f"[斑马线] crosswalk_mask全为0，无斑马线")
+                logger.info("[斑马线] crosswalk_mask全为0，无斑马线")
         else:
             if self.frame_counter % 30 == 0:
-                logger.info(f"[斑马线] crosswalk_mask为None")
+                logger.info("[斑马线] crosswalk_mask为None")
         
         crosswalk_guidance = self.crosswalk_monitor.process_frame(crosswalk_mask, blind_path_mask)
         if crosswalk_guidance:
@@ -2699,7 +2698,7 @@ class BlindPathNavigator:
                 "type": "circle",
                 "center": [x, pos_y],
                 "radius": 18,
-                "color": f"rgba(100, 100, 100, 1.0)",
+                "color": "rgba(100, 100, 100, 1.0)",
                 "thickness": 2
             })
             # 内圈（灯的颜色）

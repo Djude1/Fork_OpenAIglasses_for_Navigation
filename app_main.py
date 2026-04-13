@@ -1,18 +1,23 @@
 # app_main.py
 # -*- coding: utf-8 -*-
-import os, sys, time, json, asyncio, base64, audioop
-from typing import Any, Dict, Optional, Tuple, List, Callable, Set, Deque
+import os
+import sys
+import time
+import json
+import asyncio
+import base64
+import audioop
+from typing import Any, Dict, Optional, Tuple, List, Set, Deque
 from collections import deque
 import re
 from qwen_extractor import extract_english_label
-from navigation_master import NavigationMaster, OrchestratorResult
+from navigation_master import NavigationMaster
 from workflow_blindpath import BlindPathNavigator
 from workflow_crossstreet import CrossStreetNavigator
 import torch
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketState
 import uvicorn
 import cv2
@@ -33,8 +38,6 @@ if sys.platform.startswith("win"):
 from config import (
     GOOGLE_CREDENTIALS_PATH,
     SAMPLE_RATE,
-    CHUNK_MS,
-    AUDIO_FORMAT as AUDIO_FMT,
     UDP_IP,
     UDP_PORT,
     SERVER_HOST,
@@ -46,11 +49,9 @@ from audio_stream import (
     register_stream_route,         # 挂 /stream.wav
     broadcast_pcm16_realtime,      # 实时向连接分发 16k PCM
     hard_reset_audio,              # 音频+AI 播放总闸
-    BYTES_PER_20MS_16K,
     is_playing_now,
-    current_ai_task,
 )
-from omni_client import stream_chat, OmniStreamPiece, generate_text_async
+from omni_client import stream_chat, generate_text_async
 from asr_core import (
     ASRCallback,
     GoogleASR,
@@ -86,7 +87,6 @@ app.include_router(auth_router)
 
 # ── 靜態檔案（加入 Cache-Control，讓瀏覽器快取避免每次重載）──────────────────
 from starlette.staticfiles import StaticFiles as _StaticFiles
-from starlette.responses import Response as _Response
 
 class _CachedStaticFiles(_StaticFiles):
     """根據副檔名設定不同快取時間：
@@ -185,7 +185,7 @@ def load_navigation_models():
         #print(f"[NAVIGATION] 尝试加载模型: {seg_model_path}")
 
         if os.path.exists(seg_model_path):
-            print(f"[NAVIGATION] 模型文件存在，开始加载...")
+            print("[NAVIGATION] 模型文件存在，开始加载...")
             yolo_seg_model = YOLO(seg_model_path)
 
             # 强制放到 GPU
@@ -211,7 +211,7 @@ def load_navigation_models():
         else:
             print(f"[NAVIGATION] 错误：找不到模型文件: {seg_model_path}")
             print(f"[NAVIGATION] 当前工作目录: {os.getcwd()}")
-            print(f"[NAVIGATION] 请检查文件路径是否正确")
+            print("[NAVIGATION] 请检查文件路径是否正确")
             
         # 【修改开始】使用 ObstacleDetectorClient 替代直接的 YOLO
         from config import OBSTACLE_MODEL
@@ -219,35 +219,35 @@ def load_navigation_models():
         print(f"[NAVIGATION] 尝试加载障碍物检测模型: {obstacle_model_path}")
         
         if os.path.exists(obstacle_model_path):
-            print(f"[NAVIGATION] 障碍物检测模型文件存在，开始加载...")
+            print("[NAVIGATION] 障碍物检测模型文件存在，开始加载...")
             try:
                 # 使用 ObstacleDetectorClient 封装的 YOLO-E
                 obstacle_detector = ObstacleDetectorClient(model_path=obstacle_model_path)
-                print(f"[NAVIGATION] ========== YOLO-E 障碍物检测器加载成功 ==========")
+                print("[NAVIGATION] ========== YOLO-E 障碍物检测器加载成功 ==========")
                 
                 # 检查模型是否成功加载
                 if hasattr(obstacle_detector, 'model') and obstacle_detector.model is not None:
-                    print(f"[NAVIGATION] YOLO-E 模型已初始化")
+                    print("[NAVIGATION] YOLO-E 模型已初始化")
                     print(f"[NAVIGATION] 模型设备: {next(obstacle_detector.model.parameters()).device}")
                 else:
-                    print(f"[NAVIGATION] 警告：YOLO-E 模型初始化异常")
+                    print("[NAVIGATION] 警告：YOLO-E 模型初始化异常")
                 
                 # 检查白名单是否成功加载
                 if hasattr(obstacle_detector, 'WHITELIST_CLASSES'):
                     print(f"[NAVIGATION] 白名单类别数: {len(obstacle_detector.WHITELIST_CLASSES)}")
                     print(f"[NAVIGATION] 白名单前10个类别: {', '.join(obstacle_detector.WHITELIST_CLASSES[:10])}")
                 else:
-                    print(f"[NAVIGATION] 警告：白名单类别未定义")
+                    print("[NAVIGATION] 警告：白名单类别未定义")
                 
                 # 检查文本特征是否成功预计算
                 if hasattr(obstacle_detector, 'whitelist_embeddings') and obstacle_detector.whitelist_embeddings is not None:
-                    print(f"[NAVIGATION] YOLO-E 文本特征已预计算")
+                    print("[NAVIGATION] YOLO-E 文本特征已预计算")
                     print(f"[NAVIGATION] 文本特征张量形状: {obstacle_detector.whitelist_embeddings.shape if hasattr(obstacle_detector.whitelist_embeddings, 'shape') else '未知'}")
                 else:
-                    print(f"[NAVIGATION] 警告：YOLO-E 文本特征未预计算")
+                    print("[NAVIGATION] 警告：YOLO-E 文本特征未预计算")
                 
                 # 测试障碍物检测功能
-                print(f"[NAVIGATION] 开始测试 YOLO-E 检测功能...")
+                print("[NAVIGATION] 开始测试 YOLO-E 检测功能...")
                 try:
                     test_img = np.zeros((640, 640, 3), dtype=np.uint8)
                     # 在测试图像中画一个白色矩形，模拟一个物体
@@ -255,11 +255,11 @@ def load_navigation_models():
                     
                     # 测试检测（不提供 path_mask）
                     test_results = obstacle_detector.detect(test_img)
-                    print(f"[NAVIGATION] YOLO-E 检测测试成功!")
+                    print("[NAVIGATION] YOLO-E 检测测试成功!")
                     print(f"[NAVIGATION] 测试检测结果数: {len(test_results)}")
                     
                     if len(test_results) > 0:
-                        print(f"[NAVIGATION] 测试检测到的物体:")
+                        print("[NAVIGATION] 测试检测到的物体:")
                         for i, obj in enumerate(test_results):
                             print(f"  - 物体 {i+1}: {obj.get('name', 'unknown')}, "
                                   f"面积比例: {obj.get('area_ratio', 0):.3f}, "
@@ -269,7 +269,7 @@ def load_navigation_models():
                     import traceback
                     traceback.print_exc()
                 
-                print(f"[NAVIGATION] ========== YOLO-E 障碍物检测器加载完成 ==========")
+                print("[NAVIGATION] ========== YOLO-E 障碍物检测器加载完成 ==========")
                 
             except Exception as e:
                 print(f"[NAVIGATION] 障碍物检测器加载失败: {e}")
@@ -789,7 +789,7 @@ async def start_ai_with_text(user_text: str):
                 print(f"[OMNI] 对话结束，恢复到{omni_previous_nav_state}模式")
                 omni_previous_nav_state = None
             else:
-                print(f"[OMNI] 对话结束（无需恢复导航状态）")
+                print("[OMNI] 对话结束（无需恢复导航状态）")
             
             # 不斷開串流連線，讓 APP 保持長連線，避免重連延遲丟失音訊
 
@@ -802,7 +802,6 @@ async def start_ai_with_text(user_text: str):
     # 真正启动前先硬重置，保证**绝无**旧音频残留
     await hard_reset_audio("start_ai_with_text")
     loop = asyncio.get_running_loop()
-    from audio_stream import current_ai_task as _task_holder  # 读写模块内全局
     from audio_stream import __dict__ as _as_dict
     # 设置模块内的 current_ai_task
     task = loop.create_task(_runner())
@@ -1039,7 +1038,8 @@ async def debug_record_stop():
     if not _debug_rec_buffer:
         return {"status": "error", "msg": "無收音資料"}
 
-    import wave, os
+    import wave
+    import os
     from datetime import datetime
 
     os.makedirs(_DEBUG_REC_DIR, exist_ok=True)
@@ -1282,7 +1282,8 @@ async def ws_audio(ws: WebSocket):
                         del _verify_continuous_buf[:needed]
                         try:
                             # RMS 音量門檻：靜音時不做聲紋比對，避免偽陽性
-                            import struct, math
+                            import struct
+                            import math
                             shorts = struct.unpack(f"<{len(pcm_snap)//2}h", pcm_snap)
                             rms = math.sqrt(sum(s*s for s in shorts) / len(shorts)) if shorts else 0
                             # 推送 RMS 數值到 SSE 客戶端（音量儀表用）
@@ -1833,7 +1834,7 @@ async def on_startup_udp_broadcast():
             "service": "ai_glasses",
             "port":    SERVER_PORT,
         }).encode()
-        print(f"[DISCOVERY] UDP 廣播已啟動（port 47777，每 2 秒）", flush=True)
+        print("[DISCOVERY] UDP 廣播已啟動（port 47777，每 2 秒）", flush=True)
         while True:
             try:
                 sock.sendto(msg, ('<broadcast>', 47777))
@@ -1870,7 +1871,7 @@ async def on_startup_register_bridge_sender():
                 for ws in list(camera_viewers):
                     try:
                         await ws.send_bytes(jpeg_bytes)
-                    except Exception as e:
+                    except Exception:
                         dead.append(ws)
                 for ws in dead:
                     try:
@@ -2140,7 +2141,7 @@ class ExplainDocumentRequest(BaseModel):
 
 def _compress_image_b64(image_b64: str, max_width: int = 1280, quality: int = 80) -> str:
     """壓縮 base64 圖片：縮小到 max_width 並以 JPEG 重新編碼，大幅減少 API 傳輸量。"""
-    import base64, io
+    import base64
     try:
         raw = base64.b64decode(image_b64)
         img_array = np.frombuffer(raw, np.uint8)

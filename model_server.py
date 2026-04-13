@@ -17,7 +17,6 @@ import os
 import pickle
 import struct
 import logging
-import numpy as np
 import torch
 
 logging.basicConfig(
