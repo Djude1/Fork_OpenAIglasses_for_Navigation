@@ -5,6 +5,15 @@
 
 ---
 
+## ⚠️ 核心原則（不可違反）
+
+1. **ALL.pt 完全不動**：現有避障邏輯維持原樣，yoloe-26n-seg 走獨立測試路徑
+2. **先測試，再整合**：yoloe-26n-seg 效果通過人工驗收後，才進行正式替換
+3. **程式碼測試責任**：伺服器端 Python 測試由 Claude 負責；Flutter APP UI 由開發者驗收
+4. **平行運行**：測試期間 yoloe-26n-seg 和 ALL.pt 同時存在，不互相影響
+
+---
+
 ## 架構總覽
 
 ```
@@ -344,3 +353,296 @@ Week 5：調整優化
 | `YOLO測試場/taiwan_trafficlight-v1.pt` | 紅綠燈微調參考基準 |
 | `yolo_標籤.txt` | 教室/賣場/室內標籤來源 |
 | `obstacle_detector_client.py` | 伺服器端避障邏輯（手機化後可廢棄）|
+
+---
+
+## Phase A：APP 管理員介面 — yoloe-26n-seg AR 測試頁
+
+> 這是第一個實作目標。ALL.pt 完全不動，獨立新增測試入口。
+
+### A.1 入口位置
+
+在 Flutter APP 管理員設定頁（`ServerConfig.jsx` 對應的 APP 端設定畫面）新增一個按鈕：
+
+```
+設定頁
+└── [開發者工具]（需登入 admin 才顯示）
+    └── [yoloe-26n-seg AR 測試]  ← 新增這個
+```
+
+### A.2 AR 測試頁功能設計
+
+```
+┌─────────────────────────────────┐
+│  📷 相機即時畫面（全螢幕）         │
+│                                 │
+│  ┌──────────────────────────┐  │
+│  │  偵測框 + 標籤 + 信心值    │  │  ← AR 疊加層
+│  └──────────────────────────┘  │
+│                                 │
+│  [戶外模式] [室內模式]           │  ← 手動切換 embedding
+│                                 │
+│  FPS: 12  |  模型: yoloe-26n   │  ← 狀態列
+│  場景: outdoor  conf門檻: 0.25  │
+│  偵測數: 3                      │
+│                                 │
+│  [conf ──●────] 0.25            │  ← 即時調整信心門檻
+│  [錄影] [截圖] [← 返回]         │
+└─────────────────────────────────┘
+```
+
+### A.3 Flutter 頁面結構
+
+```dart
+// lib/screens/yoloe_ar_test_screen.dart
+
+class YoloeArTestScreen extends StatefulWidget { ... }
+
+class _YoloeArTestScreenState extends State<YoloeArTestScreen> {
+  late CameraController _camera;
+  late OnnxModel _yoloeModel;
+  EmbeddingSet _currentScene = EmbeddingSet.outdoor;
+  double _confThreshold = 0.25;
+  List<Detection> _detections = [];
+  int _fps = 0;
+
+  // 載入模型（僅此頁面使用，離開後釋放）
+  Future<void> _initModel() async {
+    _yoloeModel = await OnnxModel.load('assets/models/yoloe_26n_seg.onnx');
+    await _switchScene(EmbeddingSet.outdoor);
+  }
+
+  // 切換場景 embedding
+  Future<void> _switchScene(EmbeddingSet scene) async {
+    final emb = await EmbeddingLoader.load(scene);
+    _yoloeModel.setEmbedding(emb);
+    setState(() => _currentScene = scene);
+  }
+
+  // 每幀推論
+  void _onCameraFrame(CameraImage image) async {
+    final result = await _yoloeModel.infer(image, conf: _confThreshold);
+    setState(() => _detections = result.detections);
+  }
+
+  @override
+  void dispose() {
+    _yoloeModel.release();  // ← 離開頁面立即釋放，不影響主系統
+    super.dispose();
+  }
+}
+```
+
+### A.4 AR 疊加層（CustomPainter）
+
+```dart
+class DetectionPainter extends CustomPainter {
+  final List<Detection> detections;
+  final Size imageSize;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (var det in detections) {
+      // 畫偵測框
+      final rect = _scaleBox(det.box, imageSize, size);
+      canvas.drawRect(rect, Paint()..color = Colors.green..style = PaintingStyle.stroke..strokeWidth = 2);
+      // 畫標籤
+      _drawLabel(canvas, '${det.label} ${(det.conf * 100).toInt()}%', rect.topLeft);
+      // 畫 mask 半透明疊加（分割模型）
+      if (det.mask != null) _drawMask(canvas, det.mask!, rect, Colors.green.withOpacity(0.3));
+    }
+  }
+}
+```
+
+### A.5 程式碼測試責任（Claude 負責）
+
+```python
+# test_yoloe26n_server.py（PC 端驗證，確保模型行為正確再送 Flutter）
+
+import numpy as np, json, torch
+from ultralytics import YOLOE
+
+def test_embedding_load():
+    """驗證 embedding 可正確載入並 set_classes"""
+    model = YOLOE('model/yoloe-26n-seg.pt')
+    for scene in ['outdoor', 'indoor']:
+        emb = torch.from_numpy(np.load(f'embeddings/{scene}.npy'))
+        labels = json.load(open(f'embeddings/{scene}_labels.json', encoding='utf-8'))
+        model.set_classes(labels, emb)
+        assert len(model.names) == len(labels), f'{scene} 標籤數不符'
+    print('embedding 載入測試 ✓')
+
+def test_inference_shape(img_path: str):
+    """驗證推論輸出有 boxes 和 masks"""
+    import cv2
+    model = YOLOE('model/yoloe-26n-seg.pt')
+    emb = torch.from_numpy(np.load('embeddings/outdoor.npy'))
+    labels = json.load(open('embeddings/outdoor_labels.json', encoding='utf-8'))
+    model.set_classes(labels, emb)
+
+    img = cv2.imread(img_path)
+    r = model.predict(img, conf=0.25, verbose=False)[0]
+    assert r.boxes is not None, '無 boxes 輸出'
+    assert r.masks is not None, '無 masks 輸出（應為 seg 模型）'
+    print(f'推論測試 ✓  偵測 {len(r.boxes)} 個物件')
+
+def test_scene_switch_latency():
+    """量測 embedding 切換延遲"""
+    import time
+    model = YOLOE('model/yoloe-26n-seg.pt')
+    scenes = ['outdoor', 'indoor']
+    for scene in scenes:
+        emb = torch.from_numpy(np.load(f'embeddings/{scene}.npy'))
+        labels = json.load(open(f'embeddings/{scene}_labels.json', encoding='utf-8'))
+        t0 = time.perf_counter()
+        model.set_classes(labels, emb)
+        ms = (time.perf_counter() - t0) * 1000
+        print(f'{scene} 切換延遲：{ms:.1f}ms')
+
+if __name__ == '__main__':
+    test_embedding_load()
+    test_inference_shape('YOLO測試場/test_image.jpg')  # 準備一張測試圖
+    test_scene_switch_latency()
+```
+
+**驗收標準（全部通過才送 Flutter）：**
+
+| 測試項目 | 通過條件 |
+|---------|---------|
+| embedding 載入正確 | 標籤數完全一致 |
+| 推論有 masks 輸出 | 非 None |
+| 戶外偵測到人 | conf > 0.35 |
+| 室內偵測到椅子/桌子 | conf > 0.30 |
+| embedding 切換延遲 | < 50ms |
+| ALL.pt 行為未受影響 | 獨立測試確認 |
+
+---
+
+## Phase B：伺服器演進計畫
+
+> 手機端有 YOLO 之後，伺服器的角色和架構需要對應調整。
+
+### B.1 現在的架構（伺服器負擔重）
+
+```
+ESP32 眼鏡
+    │ WebSocket（影像 + 音訊）
+    ▼
+FastAPI 伺服器（port 8081-8084）
+    ├── YOLO 推論（ALL.pt 避障/盲道/紅綠燈）  ← CPU/GPU 大戶
+    ├── ASR（Google Speech-to-Text）
+    ├── LLM（場景描述、語音對話）
+    ├── TTS（Gemini TTS / WaveNet）
+    └── NavigationMaster 狀態機
+    │
+    ▼
+語音 + 指令回傳 ESP32
+```
+
+### B.2 手機 YOLO 後的架構（伺服器變輕）
+
+```
+手機（Flutter APP）
+    ├── yoloe-26n-seg ONNX  ← 避障推論（本地）
+    ├── yolo26n-seg ONNX    ← 紅綠燈（本地）
+    ├── ALL.pt ONNX         ← 盲道/curb（本地）
+    ├── 場景分類器 TFLite   ← 場景切換（本地）
+    └── TTS WAV 預錄音檔    ← 基本語音（本地）
+         │
+         │ 只在需要時才上傳（省頻寬）
+         ▼
+FastAPI 伺服器（精簡版）
+    ├── ASR（語音對話觸發時）
+    ├── LLM（場景描述、複雜問答）   ← 保留，手機算力不夠
+    ├── 高品質 TTS（WaveNet/Gemini）← 保留，複雜語音
+    ├── NavigationMaster 狀態機     ← 保留，邏輯複雜
+    └── 用戶資料/聯絡人/設定同步    ← 保留
+```
+
+### B.3 伺服器需要新增的 API
+
+手機有了本地 YOLO 後，伺服器需要新增以下端點配合：
+
+```python
+# 新增端點（app_main.py 擴充）
+
+# 1. 手機回報偵測結果 → 伺服器做高層決策
+@app.post("/api/mobile/detections")
+async def receive_mobile_detections(payload: MobileDetectionPayload):
+    """
+    手機每秒回報偵測到的物件清單
+    伺服器根據此資訊觸發：場景描述、危險警告、導航指令
+    """
+    detections = payload.detections   # [{label, conf, position}, ...]
+    scene = payload.scene             # outdoor / indoor
+    # 判斷是否需要 LLM 場景描述
+    if _needs_description(detections):
+        asyncio.create_task(_trigger_description(detections))
+    return {"action": "none"}  # 或 {"action": "tts", "text": "前方有人"}
+
+# 2. 手機請求場景描述
+@app.post("/api/mobile/describe_scene")
+async def describe_scene(image: UploadFile):
+    """手機拍一張圖 → 伺服器 LLM 描述 → 回傳文字"""
+    ...
+
+# 3. Embedding 版本管理（手機定期同步）
+@app.get("/api/mobile/embeddings/version")
+async def get_embedding_version():
+    """讓手機知道 embedding 有無更新需要下載"""
+    return {"version": EMBEDDING_VERSION, "scenes": ["outdoor", "indoor", "market", "classroom"]}
+
+@app.get("/api/mobile/embeddings/{scene}")
+async def download_embedding(scene: str):
+    """手機下載最新 embedding"""
+    ...
+```
+
+### B.4 伺服器不再需要做的事（可逐步移除）
+
+| 功能 | 現在 | 手機 YOLO 後 |
+|------|------|-------------|
+| 避障 YOLO 推論 | ✅ 伺服器 | ❌ 移至手機 |
+| 盲道分割 YOLO | ✅ 伺服器 | ❌ 移至手機 |
+| 紅綠燈偵測 YOLO | ✅ 伺服器 | ❌ 移至手機 |
+| 基本 TTS 播報 | ✅ 伺服器 | ❌ 本地 WAV |
+| ASR 語音辨識 | ✅ 伺服器 | ✅ 保留 |
+| LLM 場景描述 | ✅ 伺服器 | ✅ 保留 |
+| 高品質 TTS | ✅ 伺服器 | ✅ 保留 |
+| NavigationMaster | ✅ 伺服器 | ✅ 保留（或部分移植）|
+
+### B.5 過渡期策略（不硬切）
+
+```
+Stage 1（現在）：ALL.pt 在伺服器，yoloe-26n-seg 在 APP 測試
+    ↓ yoloe-26n-seg 驗收通過
+Stage 2：APP 主用 yoloe-26n-seg 避障，伺服器 ALL.pt 仍保留作備援
+    ↓ 穩定運行 2 週
+Stage 3：伺服器移除 YOLO 推論，改為輕量化；APP 完全本地 YOLO
+```
+
+---
+
+## 更新後的 Phase 執行順序
+
+```
+【立即可做】
+Phase A：
+  [ ] A1. 計算 outdoor.npy / indoor.npy（compute_walk_embeddings.py）
+  [ ] A2. 執行 test_yoloe26n_server.py → 全部測試通過
+  [ ] A3. Flutter APP 新增管理員入口按鈕
+  [ ] A4. 實作 YoloeArTestScreen（相機 + AR 疊加 + 場景切換）
+  [ ] A5. 開發者手動驗收（戶外/室內實地測試）
+
+【A 驗收通過後】
+Phase 1-4（原計畫）：
+  完整手機端部署 + 場景切換引擎
+
+【平行進行】
+Phase B：
+  [ ] B1. 新增 /api/mobile/detections 端點
+  [ ] B2. 新增 embedding 版本管理端點
+  [ ] B3. 設計手機→伺服器的決策協議
+  [ ] B4. Stage 2 過渡測試（雙軌並行）
+```
