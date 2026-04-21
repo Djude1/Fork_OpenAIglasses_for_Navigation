@@ -43,6 +43,10 @@ OBSTACLE_WHITELIST = [
     'stairs', 'step', 'ramp', 'hole',
     'bag', 'suitcase', 'backpack',
     'table', 'ladder', 'object', 'obstacle',
+    # ALL.pt 視障導航專用類別
+    'guide_bricks', 'crossing_crosswalk',
+    'crossing_green_light', 'crossing_red_light',
+    'green_sidewalk', 'sidewalk',
 ]
 
 
