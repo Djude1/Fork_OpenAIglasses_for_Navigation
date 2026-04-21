@@ -65,3 +65,26 @@ git add .claude/commands/
 ---
 
 全部確認無誤後執行 commit & push。
+
+---
+
+### Push 完成後：主動告知交接資料狀態
+
+**每次 push 完，必須主動執行以下檢查並告知使用者結果**：
+
+```python
+import os, datetime
+pairs = [('.env', '_交接資料/.env'), ('Website/.env', '_交接資料/Website.env')]
+for src, dst in pairs:
+    src_t = os.path.getmtime(src) if os.path.exists(src) else None
+    dst_t = os.path.getmtime(dst) if os.path.exists(dst) else None
+    src_s = datetime.datetime.fromtimestamp(src_t).strftime('%Y-%m-%d %H:%M') if src_t else '不存在'
+    dst_s = datetime.datetime.fromtimestamp(dst_t).strftime('%Y-%m-%d %H:%M') if dst_t else '不存在'
+    diff = '⚠️ 需要同步' if src_t and dst_t and src_t > dst_t + 60 else 'OK'
+    print(f'{diff}  {src}: {src_s}  |  {dst}: {dst_s}')
+```
+
+- **OK**：告知「交接資料同步正常」
+- **⚠️ 需要同步**：明確告知使用者「`_交接資料/` 需要手動同步，請執行 `cp .env _交接資料/.env`」
+
+> 規則來源：使用者要求每次 push 後必須主動回報交接資料狀態，不能等使用者問。
