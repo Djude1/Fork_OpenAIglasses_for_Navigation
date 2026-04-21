@@ -372,22 +372,25 @@ Week 5：調整優化
 
 ### A.2 AR 測試頁功能設計
 
+> **強制要求**：
+> - AR 畫面**全螢幕**，相機佔滿整個螢幕（含瀏海/打孔區），無邊框
+> - 偵測框標籤**一律顯示繁體中文**，不顯示英文類別名稱
+
 ```
-┌─────────────────────────────────┐
-│  📷 相機即時畫面（全螢幕）         │
+┌─────────────────────────────────┐  ← 全螢幕（無邊框、無導航列）
+│  📷 相機即時畫面（滿版）          │
 │                                 │
-│  ┌──────────────────────────┐  │
-│  │  偵測框 + 標籤 + 信心值    │  │  ← AR 疊加層
-│  └──────────────────────────┘  │
+│  ┌──────────┐                  │
+│  │ 人  92%  │  ← 繁體中文標籤  │  ← AR 偵測框疊加層
+│  └──────────┘                  │
+│       ┌───────────┐            │
+│       │ 椅子  76%  │            │
+│       └───────────┘            │
 │                                 │
-│  [戶外模式] [室內模式]           │  ← 手動切換 embedding
-│                                 │
-│  FPS: 12  |  模型: yoloe-26n   │  ← 狀態列
-│  場景: outdoor  conf門檻: 0.25  │
-│  偵測數: 3                      │
-│                                 │
-│  [conf ──●────] 0.25            │  ← 即時調整信心門檻
-│  [錄影] [截圖] [← 返回]         │
+│  ┄┄┄┄┄┄ 半透明控制列 ┄┄┄┄┄┄┄  │  ← 底部半透明，不擋畫面
+│  [戶外] [室內]   FPS:12  偵測:3 │
+│  conf [──●──] 0.25             │
+│  [截圖]              [✕ 返回]  │
 └─────────────────────────────────┘
 ```
 
@@ -433,7 +436,60 @@ class _YoloeArTestScreenState extends State<YoloeArTestScreen> {
 }
 ```
 
-### A.4 AR 疊加層（CustomPainter）
+### A.4 標籤中英對照表（完整）
+
+推論輸出的英文 label → 顯示在 AR 畫面的繁體中文：
+
+```dart
+// lib/constants/yoloe_label_zh.dart
+const Map<String, String> YOLOE_LABEL_ZH = {
+  // 人與動物
+  'person': '人', 'dog': '狗', 'animal': '動物',
+  'stroller': '嬰兒車', 'scooter': '滑板車',
+  // 車輛
+  'bicycle': '腳踏車', 'motorcycle': '機車', 'car': '轎車',
+  'bus': '公車', 'truck': '卡車',
+  // 柱狀障礙
+  'pole': '電線桿', 'post': '柱子', 'bollard': '護柱',
+  'utility pole': '電線桿', 'light pole': '路燈桿', 'signpost': '路牌',
+  // 路邊設施
+  'bench': '長椅', 'trash can': '垃圾桶', 'hydrant': '消防栓',
+  'cone': '三角錐', 'barrel': '桶子', 'cart': '推車', 'box': '箱子',
+  'stone': '石頭',
+  // 阻隔物
+  'fence': '圍欄', 'barrier': '護欄', 'wall': '牆壁',
+  'gate': '大門', 'door': '門',
+  // 地面障礙
+  'curb': '路緣石', 'stairs': '階梯', 'step': '台階',
+  'ramp': '坡道', 'hole': '坑洞', 'rock': '岩石', 'branch': '樹枝',
+  // 植物
+  'tree': '樹木', 'potted plant': '盆栽',
+  // 行李
+  'bag': '包包', 'suitcase': '行李箱', 'backpack': '背包',
+  // 家具
+  'chair': '椅子', 'table': '桌子', 'office chair': '辦公椅',
+  'sofa': '沙發', 'desk': '書桌',
+  // 室內障礙
+  'glass wall': '玻璃牆', 'threshold': '門檻',
+  'power cord': '電源線', 'cable': '電線',
+  'wet floor sign': '小心地滑',
+  // 賣場
+  'shopping cart': '購物車', 'shopping basket': '購物籃',
+  'display shelf': '貨架', 'checkout counter': '結帳櫃台',
+  'refrigerator door': '冰箱門',
+  // 教室
+  'whiteboard': '白板', 'projector': '投影機',
+  'student desk': '課桌', 'stacking chair': '折疊椅',
+  'laptop': '筆電', 'textbook': '課本',
+  // 通用
+  'obstacle': '障礙物', 'object': '物體',
+  'ladder': '梯子', 'table': '桌子',
+};
+
+String labelZh(String en) => YOLOE_LABEL_ZH[en.toLowerCase()] ?? en;
+```
+
+### A.5 AR 疊加層（CustomPainter）
 
 ```dart
 class DetectionPainter extends CustomPainter {
@@ -443,15 +499,120 @@ class DetectionPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     for (var det in detections) {
-      // 畫偵測框
       final rect = _scaleBox(det.box, imageSize, size);
-      canvas.drawRect(rect, Paint()..color = Colors.green..style = PaintingStyle.stroke..strokeWidth = 2);
-      // 畫標籤
-      _drawLabel(canvas, '${det.label} ${(det.conf * 100).toInt()}%', rect.topLeft);
-      // 畫 mask 半透明疊加（分割模型）
-      if (det.mask != null) _drawMask(canvas, det.mask!, rect, Colors.green.withOpacity(0.3));
+
+      // 偵測框
+      canvas.drawRect(rect, Paint()
+        ..color = Colors.greenAccent
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5);
+
+      // mask 半透明疊加
+      if (det.mask != null) {
+        _drawMask(canvas, det.mask!, size, Colors.greenAccent.withOpacity(0.25));
+      }
+
+      // 標籤（繁體中文 + 信心值）
+      final zhLabel = '${labelZh(det.label)}  ${(det.conf * 100).toInt()}%';
+      _drawLabel(canvas, zhLabel, rect.topLeft);
     }
   }
+
+  void _drawLabel(Canvas canvas, String text, Offset pos) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 13,
+          fontWeight: FontWeight.bold,
+          shadows: [Shadow(color: Colors.black, blurRadius: 4)],
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    // 背景色塊
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(pos.dx, pos.dy - 20, tp.width + 8, 22),
+        const Radius.circular(4),
+      ),
+      Paint()..color = Colors.black54,
+    );
+    tp.paint(canvas, Offset(pos.dx + 4, pos.dy - 18));
+  }
+}
+```
+
+### A.6 全螢幕相機實作
+
+```dart
+// 全螢幕相機：覆蓋系統 UI、無邊框
+@override
+Widget build(BuildContext context) {
+  return Scaffold(
+    backgroundColor: Colors.black,
+    body: Stack(
+      fit: StackFit.expand,  // ← 強制填滿整個螢幕
+      children: [
+        // 1. 相機預覽（全螢幕）
+        CameraPreview(_camera),
+
+        // 2. AR 偵測框疊加
+        CustomPaint(
+          painter: DetectionPainter(
+            detections: _detections,
+            imageSize: Size(
+              _camera.value.previewSize!.height,
+              _camera.value.previewSize!.width,
+            ),
+          ),
+        ),
+
+        // 3. 底部半透明控制列（不擋畫面）
+        Positioned(
+          bottom: 0, left: 0, right: 0,
+          child: Container(
+            color: Colors.black.withOpacity(0.5),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Column(children: [
+              // 場景切換 + 狀態
+              Row(children: [
+                _sceneBtn('戶外', EmbeddingSet.outdoor),
+                _sceneBtn('室內', EmbeddingSet.indoor),
+                const Spacer(),
+                Text('FPS: $_fps', style: const TextStyle(color: Colors.white)),
+                const SizedBox(width: 8),
+                Text('偵測: ${_detections.length}', style: const TextStyle(color: Colors.white)),
+              ]),
+              // conf 滑桿
+              Row(children: [
+                const Text('門檻', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                Expanded(child: Slider(
+                  value: _confThreshold, min: 0.1, max: 0.9, divisions: 16,
+                  onChanged: (v) => setState(() => _confThreshold = v),
+                )),
+                Text(_confThreshold.toStringAsFixed(2),
+                    style: const TextStyle(color: Colors.white, fontSize: 12)),
+              ]),
+            ]),
+          ),
+        ),
+
+        // 4. 返回按鈕（右上角）
+        Positioned(
+          top: MediaQuery.of(context).padding.top + 8,
+          right: 12,
+          child: IconButton(
+            icon: const Icon(Icons.close, color: Colors.white, size: 28),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ),
+      ],
+    ),
+    extendBodyBehindAppBar: true,  // ← 延伸到系統列後方
+  );
 }
 ```
 
