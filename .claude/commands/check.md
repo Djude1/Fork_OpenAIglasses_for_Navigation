@@ -97,6 +97,55 @@ asyncio.run(test())
 
 **禁止**：因為 API Key「免費」就優先使用，試用金才是主力。
 
+## YOLO 障礙物偵測模型地雷（必遵守）
+
+### 白名單必須覆蓋模型全部類別
+
+`obstacle_detector_client.py` 和 `model_server.py` 的 `OBSTACLE_WHITELIST` 必須包含
+目前 `OBSTACLE_MODEL` 的**所有**類別，否則不在白名單內的類別會被靜默過濾掉。
+
+**換模型前必做驗證**：
+
+```python
+from ultralytics import YOLO
+
+# 換成實際使用的模型路徑
+m = YOLO('model/ALL.pt')
+
+WHITELIST = {
+    'person','bicycle','car','motorcycle','bus','truck',
+    'animal','scooter','stroller','dog',
+    'pole','post','bollard','utility pole','light pole','signpost',
+    'bench','chair','potted plant','hydrant','cone','stone','box',
+    'trash can','barrel','cart',
+    'fence','barrier','wall','gate','door',
+    'rock','tree','branch','curb',
+    'stairs','step','ramp','hole',
+    'bag','suitcase','backpack',
+    'table','ladder','object','obstacle',
+    'guide_bricks','crossing_crosswalk',
+    'crossing_green_light','crossing_red_light',
+    'green_sidewalk','sidewalk',
+}
+
+missing = [c for c in m.names.values() if c.lower() not in WHITELIST]
+assert not missing, f"白名單缺少類別：{missing}"
+print(f"覆蓋率：{len(m.names)}/{len(m.names)} ✓")
+```
+
+### YOLOE vs 標準 YOLO 判斷方式
+
+`YOLOE()` 可以成功載入任何標準 YOLO 模型（不會報錯），若未加防護會誤設
+`is_yoloe=True`，導致以文字嵌入覆蓋固定類別 → 所有偵測（含 person）全部失效。
+
+**判斷依據**：真正的 YOLOE 模型類別名稱為**純數字**（`'0'`、`'1'`...）；
+有具名類別（`'person'`、`'car'`...）即為標準 YOLO，必須走標準路徑。
+
+`obstacle_detector_client.py` 已加防護（載入後立即檢查 class_names 是否全為數字），
+**勿移除此檢查**。
+
+---
+
 ## YOLO 訓練地雷（必遵守）
 
 1. **Windows 中文路徑禁令**：PyTorch `torch.save()` 在 Windows 無法處理中文路徑。
