@@ -67,10 +67,10 @@ USE_VERTEX_AI: bool  = os.environ.get("USE_VERTEX_AI", "true").lower() == "true"
 
 # 盲道分割模型
 BLIND_PATH_MODEL: str = os.getenv("BLIND_PATH_MODEL", "model/ALL.pt")
-# 障礙物偵測模型（yoloe-26n-seg：12MB nano，get_text_pe 預算 embedding 只算白名單類別，比全跑再篩選快）
-OBSTACLE_MODEL: str = os.getenv("OBSTACLE_MODEL", "model/yoloe-26n-seg.pt")
-# YOLO-E 後端預設路徑（與 OBSTACLE_MODEL 共用同一個 nano 模型）
-YOLOE_MODEL_PATH: str = os.getenv("YOLOE_MODEL_PATH", "model/yoloe-26n-seg.pt")
+# 障礙物偵測模型（ALL.pt 含視障導航專用類別）
+OBSTACLE_MODEL: str = os.getenv("OBSTACLE_MODEL", "model/ALL.pt")
+# YOLO-E 後端預設路徑（與 OBSTACLE_MODEL 共用）
+YOLOE_MODEL_PATH: str = os.getenv("YOLOE_MODEL_PATH", "model/ALL.pt")
 # 紅綠燈偵測模型
 TRAFFICLIGHT_MODEL: str = os.getenv("TRAFFICLIGHT_MODEL", "model/ALL.pt")
 # 物品識別模型（購物場景）

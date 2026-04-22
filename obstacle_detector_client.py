@@ -79,6 +79,10 @@ class ObstacleDetectorClient:
             'table', 'ladder',
             # 通用（捕捉未知障礙物）
             'object', 'obstacle',
+            # ALL.pt 視障導航專用類別
+            'guide_bricks', 'crossing_crosswalk',
+            'crossing_green_light', 'crossing_red_light',
+            'green_sidewalk', 'sidewalk',
         ]
         # 標記模型類型：YOLOE（文字提示）或標準 YOLO（固定類別）
         self.is_yoloe = False
