@@ -110,6 +110,9 @@ class YoloeInference {
   /// 對單幀做推論。未 ready / 已 dispose / 前一幀未完成 → 回 null（呼叫端應 skip）。
   Future<InferResult?> infer(CameraImage frame) async {
     if (_disposed || _session == null || _busy) return null;
+    // 在 try 外先取得尺寸，讓 catch 也能用正確的 srcW/srcH
+    final srcW = frame.width;
+    final srcH = frame.height;
     _busy = true;
     try {
       // (1) 主 isolate：copy plane bytes（跨 isolate 傳遞需可序列化）
@@ -123,26 +126,29 @@ class YoloeInference {
         width: frame.width,
         height: frame.height,
       );
-      final srcW = frame.width;
-      final srcH = frame.height;
 
       // (2) background isolate：YUV→RGB → letterbox 640 → CHW Float32 0-1
       final pre = await compute(_preprocessIsolate, req);
 
-      // (3) 主 isolate：ONNX run（runAsync 內部又會丟 native worker thread）
+      // (3) 主 isolate：runAsync 將推論丟進 native worker thread，主執行緒只是 await，
+      //   不阻塞 Flutter 渲染管線。例外由外層 try-catch 捕捉，_busy 由 finally 釋放。
+      //   （舊版改用同步 run() 是誤解：run() 把整個 CPU 推論時間 ~2-3s 完整卡在主執行緒，
+      //     是 Davey 3-4 秒的直接原因）
       final input = OrtValueTensor.createTensorWithDataList(
         pre.data,
         [1, 3, imgsz, imgsz],
       );
       final runOpts = OrtRunOptions();
-      final outputs =
+      final List<OrtValue?>? rawOutputs =
           await _session!.runAsync(runOpts, {'images': input});
       input.release();
       runOpts.release();
 
-      if (outputs == null || outputs.isEmpty) {
+      if (rawOutputs == null || rawOutputs.isEmpty) {
+        debugPrint('[YoloeInference] runAsync() 回傳空 outputs');
         return InferResult(detections: const [], srcW: srcW, srcH: srcH);
       }
+      final outputs = rawOutputs;
 
       // 主 isolate 攤平兩個輸出 — OrtValue.value 是 dynamic List，
       // 跨 isolate 無法傳遞且 reshape 內部 num.toDouble()（這就是 ~150ms 的瓶頸）。
@@ -152,6 +158,7 @@ class YoloeInference {
         o?.release();
       }
       if (raw0 is! List) {
+        debugPrint('[YoloeInference] output0.value 非 List，實際型別=${raw0.runtimeType}');
         return InferResult(detections: const [], srcW: srcW, srcH: srcH);
       }
 
@@ -170,7 +177,7 @@ class YoloeInference {
       final numAnchors = flat0.length ~/ (4 + nc + 32);
 
       // (4) background isolate：NMS + mask 解碼 + Moore tracing → polygon
-      final dets = await compute(_decodeIsolate, _DecodeReq(
+      final decoded = await compute(_decodeIsolate, _DecodeReq(
         output0: flat0,
         output1: flat1 ?? Float32List(0),
         proto1HasData: flat1 != null,
@@ -195,20 +202,26 @@ class YoloeInference {
 
       _debugCnt++;
       if (_debugCnt % 10 == 0) {
-        final first = dets.isNotEmpty ? dets.first : null;
+        final first = decoded.detections.isNotEmpty ? decoded.detections.first : null;
         debugPrint(
           '[YoloeInference] frame=${srcW}x$srcH '
           'scale=${pre.scale.toStringAsFixed(3)} '
           'pad=(${pre.padX},${pre.padY}) '
-          'dets=${dets.length} '
+          'globalMax=${decoded.globalMaxConf.toStringAsFixed(3)} '
+          'dets=${decoded.detections.length} '
           'first=${first == null ? "none" : "${first.label} ${(first.confidence * 100).toInt()}% poly=${first.polygon?.length ?? 0}pt"}',
         );
       }
 
-      return InferResult(detections: dets, srcW: srcW, srcH: srcH);
+      return InferResult(
+        detections: decoded.detections,
+        srcW: srcW,
+        srcH: srcH,
+        globalMaxConf: decoded.globalMaxConf,
+      );
     } catch (e, st) {
       debugPrint('[YoloeInference] infer error: $e\n$st');
-      return InferResult(detections: const [], srcW: 0, srcH: 0);
+      return InferResult(detections: const [], srcW: srcW, srcH: srcH);
     } finally {
       _busy = false;
     }
@@ -409,11 +422,18 @@ class _DecodeReq {
   });
 }
 
-List<Detection> _decodeIsolate(_DecodeReq req) {
+// _decodeIsolate 回傳結構：偵測結果 + 全域最高分（診斷用）
+class _DecodeResult {
+  final List<Detection> detections;
+  final double globalMaxConf;
+  const _DecodeResult(this.detections, this.globalMaxConf);
+}
+
+_DecodeResult _decodeIsolate(_DecodeReq req) {
   final na = req.numAnchors;
   final nc = req.nc;
   if (na <= 0 || nc <= 0 || req.output0.length < (4 + nc) * na) {
-    return const [];
+    return _DecodeResult(const [], 0.0);
   }
 
   // ── 1. 候選收集（letterbox 座標） ──
@@ -422,16 +442,14 @@ List<Detection> _decodeIsolate(_DecodeReq req) {
   final ids = <int>[];
   final anchors = <int>[];
 
-  // 診斷用：掃描全域最高信心分數（每 30 幀印一次）
-  double _dbgGlobalMax = 0.0;
-  int _dbgTopId = -1;
-  for (int _a = 0; _a < na; _a++) {
-    for (int _c = 0; _c < nc; _c++) {
-      final _s = req.output0[(4 + _c) * na + _a];
-      if (_s > _dbgGlobalMax) { _dbgGlobalMax = _s; _dbgTopId = _c; }
+  // 掃描全域最高信心分數（回傳給主執行緒顯示，方便診斷）
+  double globalMax = 0.0;
+  for (int a = 0; a < na; a++) {
+    for (int c = 0; c < nc; c++) {
+      final s = req.output0[(4 + c) * na + a];
+      if (s > globalMax) globalMax = s;
     }
   }
-  debugPrint('[YOLOE-diag] globalMaxConf=$_dbgGlobalMax topClass=$_dbgTopId/${req.labels.length} confTh=${req.confTh}');
 
   for (int a = 0; a < na; a++) {
     double maxConf = 0.0;
@@ -454,7 +472,7 @@ List<Detection> _decodeIsolate(_DecodeReq req) {
     anchors.add(a);
   }
 
-  if (boxes.isEmpty) return const [];
+  if (boxes.isEmpty) return _DecodeResult(const [], globalMax);
 
   final keep = _isoNms(boxes, scores, req.iouTh);
 
@@ -593,7 +611,7 @@ List<Detection> _decodeIsolate(_DecodeReq req) {
     ));
   }
 
-  return dets;
+  return _DecodeResult(dets, globalMax);
 }
 
 // ── Moore neighbor tracing：8-connectivity 外輪廓 ─────────────────────
