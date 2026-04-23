@@ -2,6 +2,7 @@
 
 > 狀態：規劃中（2026-04-21）
 > 目標：將 YOLO 推論全部移至手機端，零伺服器依賴，提升 FPS 與隱私性
+> **現階段範圍：路上避障（outdoor）+ 室內避障（indoor）兩個場景**
 
 ---
 
@@ -19,8 +20,8 @@
 ```
 手機端
 ├── 感知層   Camera + GPS + IMU
-├── 推論層   3 個 ONNX 模型 + 場景分類器
-├── 融合層   三層場景切換決策引擎
+├── 推論層   3 個 ONNX 模型
+├── 融合層   兩層場景切換決策引擎（GPS 精度 + 物件觸發）
 └── 輸出層   TTS 語音 + 震動
 ```
 
@@ -30,10 +31,9 @@
 
 | 功能 | 模型 | 理由 |
 |------|------|------|
-| 開放詞彙避障 | `yoloe-26n-seg`（11.2MB） | YOLOE nano 唯一存在的 nano，yoloe-11n-seg 不存在 |
+| 開放詞彙避障 | `yoloe-26n-seg`（11.2MB） | YOLOE nano 唯一存在的版本，yoloe-11n-seg 不存在 |
 | 紅綠燈偵測 | `yolo26n-seg` 微調（~5MB） | NMS-Free、邊緣優化、比 YOLOv8n 快 43% |
 | 導航核心（curb/盲道）| `ALL.pt` → ONNX（~25MB） | 專門訓練的固定類別，YOLOE 開放詞彙無法取代 |
-| 場景分類 | `MobileNetV3-Small` TFLite（~3MB） | 每秒一次、128×128 輸入、CPU < 5ms |
 
 ### 為什麼不全用 ALL.pt
 
@@ -59,20 +59,21 @@ YOLOE('model/yoloe-26n-seg.pt').export(format='onnx', half=True, simplify=True)
 YOLO('runs/traffic/v1/weights/best.pt').export(format='onnx', half=True, simplify=True)
 ```
 
-### 1.2 預計算 Embedding（四組場景）
+### 1.2 預計算 Embedding（兩組場景：路上 + 室內）
 
 在 PC 上用 yoloe-26n-seg 的 Text Encoder 計算向量，存 `.npy`，手機只載向量不跑 Text Encoder。
 
 ```python
-# compute_embeddings.py
-import torch, numpy as np, json
+# compute_walk_embeddings.py
+import torch, numpy as np, json, os
 from ultralytics import YOLOE
 
 model = YOLOE('model/yoloe-26n-seg.pt')
+os.makedirs('embeddings', exist_ok=True)
 
 SCENES = {
     "outdoor": [
-        # 原始 37 個戶外標籤（yoloe-11l-seg 時代沿用）
+        # 路上行走避障——原始 yoloe-11l-seg 時代沿用標籤
         'person', 'bicycle', 'car', 'motorcycle', 'bus', 'truck',
         'animal', 'scooter', 'stroller', 'dog',
         'pole', 'post', 'bollard', 'utility pole', 'light pole', 'signpost',
@@ -81,27 +82,17 @@ SCENES = {
         'rock', 'tree', 'branch', 'curb', 'stairs', 'step', 'ramp', 'hole',
         'bag', 'suitcase', 'backpack', 'table', 'ladder', 'object', 'obstacle',
     ],
-    "market": [
-        # 戶外核心 + 賣場專用
-        'person', 'bicycle', 'car', 'motorcycle', 'bus', 'truck',
-        'pole', 'cone', 'stairs', 'curb', 'door', 'gate', 'barrier',
-        'shopping cart', 'shopping basket', 'checkout counter',
-        'refrigerator door', 'display shelf', 'wet floor sign',
-        'apple', 'banana', 'broccoli', 'carrot',
-        'coke bottle', 'milk carton', 'canned food',
-    ],
-    "classroom": [
-        # 戶外核心 + 教室專用
-        'person', 'pole', 'stairs', 'door', 'bag', 'backpack',
-        'whiteboard', 'projector', 'projector screen', 'lectern',
-        'student desk', 'stacking chair', 'laptop', 'textbook',
-        'clock', 'speaker', 'power strip',
-    ],
-    "crossing": [
-        # 過馬路精簡 15 個（減少干擾）
-        'person', 'bicycle', 'car', 'motorcycle', 'bus', 'truck',
-        'traffic cone', 'barrier', 'curb', 'stairs',
-        'crossing crosswalk', 'traffic light', 'pole', 'scooter', 'dog',
+    "indoor": [
+        # 室內行走避障——家具 + 障礙物 + 人
+        'person', 'dog', 'animal',
+        'chair', 'office chair', 'stool', 'sofa',
+        'table', 'desk', 'dining table',
+        'door', 'glass wall', 'glass partition', 'threshold', 'step',
+        'stairs', 'ramp', 'hole',
+        'trash can', 'potted plant', 'umbrella',
+        'power cord', 'cable', 'backpack', 'bag', 'suitcase',
+        'box', 'cart', 'ladder', 'barrier', 'cone',
+        'wet floor sign', 'obstacle', 'object',
     ],
 }
 
@@ -112,6 +103,8 @@ for scene_name, labels in SCENES.items():
     with open(f'embeddings/{scene_name}_labels.json', 'w', encoding='utf-8') as f:
         json.dump(labels, f, ensure_ascii=False, indent=2)
     print(f'{scene_name}: {len(labels)} 個標籤，shape={embeddings.shape}')
+
+print('完成！產出：embeddings/outdoor.npy / indoor.npy')
 ```
 
 ### 1.3 紅綠燈模型微調
@@ -157,81 +150,73 @@ names:
 | 自拍台灣路口影片 | 最關鍵，50-100 張就有效 |
 | Roboflow 公開集 | 補充多樣性 |
 
-### 1.4 場景分類器
-
-- 架構：MobileNetV3-Small
-- 輸入：128×128
-- 類別：`outdoor / market / classroom / indoor / crossing`
-- 資料：每類 200 張（手機自拍 + 網路爬圖）
-- 匯出：TFLite INT8 量化（~2MB）
-
 ---
 
-## Phase 2：三層場景切換融合引擎
+## Phase 2：兩層場景切換融合引擎
 
 ```
-優先級：Layer 3（物品觸發）> Layer 2（AI 分類）> Layer 1（GPS）
+優先級：Layer 2（物件觸發）> Layer 1（GPS 精度）
 ```
 
-### Layer 1：GPS（粗粒度，室外輔助）
+### Layer 1：GPS 精度（判斷室內 / 室外）
 
-每 30 秒查一次。預建地標資料庫（JSON 存 APP 內）：
-
-```json
-{
-  "landmarks": [
-    {"name": "全聯福利中心", "lat": 25.048, "lng": 121.517, "radius": 80, "scene": "market"},
-    {"name": "台北火車站",   "lat": 25.047, "lng": 121.517, "radius": 200, "scene": "indoor"}
-  ]
-}
-```
-
-- 觸發條件：進入地標半徑 → **建議**切換（不立即，等 Layer 2 確認）
-- 限制：室內 GPS 失效，完全依靠 Layer 2 + 3
-
-### Layer 2：AI 場景分類器（每秒）
-
-滑動視窗投票，防止場景抖動：
+**不需要 AI 模型**，直接用 GPS 定位精度值判斷：
 
 ```dart
-class SceneVoter {
-  final _window = List<Scene>.filled(5, Scene.outdoor);
-  int _ptr = 0;
+class GpsSceneDetector {
+  // GPS 精度（accuracy，單位：公尺）
+  // 室外：衛星訊號強，精度 < 10m
+  // 室內：衛星訊號弱，精度 > 25m（牆壁遮蔽）
+  static const double OUTDOOR_THRESHOLD = 10.0;   // m，< 此值 = 確定室外
+  static const double INDOOR_THRESHOLD  = 25.0;   // m，> 此值 = 確定室內
 
-  Scene vote(Scene newScene) {
-    _window[_ptr++ % 5] = newScene;
-    final counts = <Scene, int>{};
-    for (var s in _window) counts[s] = (counts[s] ?? 0) + 1;
-    return counts.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
+  Scene detect(double accuracyMeters) {
+    if (accuracyMeters < OUTDOOR_THRESHOLD) return Scene.outdoor;
+    if (accuracyMeters > INDOOR_THRESHOLD)  return Scene.indoor;
+    return Scene.unknown;  // 介於中間，維持上一個場景
   }
 }
 ```
 
-- 觸發條件：連續 3 秒同場景 → 正式切換
+| GPS 精度 | 判斷 | 原因 |
+|---------|------|------|
+| < 10m | 室外 | 衛星直視，訊號強 |
+| 10~25m | 不確定（維持現狀）| 可能在騎樓、地下室出入口 |
+| > 25m | 室內 | 建築物遮蔽衛星訊號 |
 
-### Layer 3：模型偵測觸發（最高優先，即時）
+- 每 5 秒更新一次 GPS 精度
+- 切換需連續 3 次同結果才生效（防抖）
 
-YOLOE 偵測到場景特有物品 → 立即切換標籤集：
+### Layer 2：模型偵測觸發（最高優先，即時）
+
+YOLOE 偵測到場景特有物品 → 立即切換 Embedding 集：
 
 ```dart
-const TRIGGER_MAP = {
-  'shopping cart':      Scene.market,
-  'shopping basket':    Scene.market,
-  'display shelf':      Scene.market,
-  'wet floor sign':     Scene.market,
-  'whiteboard':         Scene.classroom,
-  'projector':          Scene.classroom,
-  'student desk':       Scene.classroom,
-  'crossing crosswalk': Scene.crossing,
+const TRIGGER_INDOOR = {
+  'wet floor sign',   // 室內地板警示牌
+  'office chair',     // 辦公椅
+  'stool',            // 圓椅
+  'glass wall',       // 玻璃牆（室內常見）
+  'glass partition',  // 玻璃隔板
 };
 
-void checkTriggers(List<Detection> detections) {
+const TRIGGER_OUTDOOR = {
+  'car', 'bus', 'truck', 'motorcycle',  // 馬路上的車
+  'traffic cone',                        // 交通錐
+  'utility pole',                        // 電線桿
+};
+
+void checkTriggers(List<Detection> detections, Scene currentScene) {
   for (var det in detections) {
     if (det.confidence < 0.6) continue;
-    final triggered = TRIGGER_MAP[det.className];
-    if (triggered != null && triggered != _currentScene) {
-      _switchScene(triggered, reason: 'object_trigger:${det.className}');
-      break;
+    final label = det.className.toLowerCase();
+    if (TRIGGER_INDOOR.contains(label) && currentScene != Scene.indoor) {
+      _switchScene(Scene.indoor, reason: 'object_trigger:$label');
+      return;
+    }
+    if (TRIGGER_OUTDOOR.contains(label) && currentScene != Scene.outdoor) {
+      _switchScene(Scene.outdoor, reason: 'object_trigger:$label');
+      return;
     }
   }
 }
@@ -240,14 +225,14 @@ void checkTriggers(List<Detection> detections) {
 ### 融合決策完整流程
 
 ```
-每秒執行：
-┌─ Layer 3 有觸發物件（conf > 0.6）？
+每 5 秒執行（GPS 更新時）：
+┌─ Layer 2 偵測到觸發物件（conf > 0.6）？
 │  └─ YES → 立即切換，冷卻 15 秒
 │
-└─ NO → Layer 2 滑動視窗結果與當前不同？
-   └─ YES → GPS 也支持？
-      ├─ GPS 支持 → 立即切換
-      └─ GPS 不支持或室內 → 連續 3 秒後切換
+└─ NO → Layer 1 GPS 精度判斷結果？
+   ├─ 確定室外（< 10m）→ 切換為 outdoor embedding
+   ├─ 確定室內（> 25m）→ 切換為 indoor embedding
+   └─ 不確定（10~25m）→ 維持現有 embedding，不切換
 ```
 
 ---
@@ -261,26 +246,27 @@ dependencies:
   onnxruntime: ^1.x
   camera: ^0.10.x
   geolocator: ^10.x
-  tflite_flutter: ^0.10.x
+  device_info_plus: ^9.x    # 讀取 CPU / RAM / 溫度
 ```
 
-### 3.2 三 Isolate 並行管線
+### 3.2 兩 Isolate 並行管線
 
 ```dart
 class InferencePipeline {
-  late SendPort _obstaclePort;    // Isolate A：避障（每幀）
-  late SendPort _trafficPort;     // Isolate B：紅綠燈（過馬路模式才啟動）
-  late SendPort _classifierPort;  // Isolate C：場景分類（每秒）
+  late SendPort _obstaclePort;   // Isolate A：避障（每幀，yoloe-26n-seg）
+  late SendPort _trafficPort;    // Isolate B：紅綠燈（過馬路模式才啟動）
 
   Future<void> init() async {
-    _obstaclePort   = await _spawnIsolate('obstacle',    'assets/models/yoloe_26n_seg.onnx');
-    _classifierPort = await _spawnIsolate('classifier',  'assets/models/scene_classifier.tflite');
+    _obstaclePort = await _spawnIsolate('obstacle', 'assets/models/yoloe_26n_seg.onnx');
     // 紅綠燈 Isolate 延遲啟動，省記憶體
   }
 
   void switchEmbedding(Scene scene) {
     // 不中斷推論，下一幀生效
-    _obstaclePort.send({'action': 'switch_embedding', 'path': 'assets/embeddings/${scene.name}.npy'});
+    _obstaclePort.send({
+      'action': 'switch_embedding',
+      'path': 'assets/embeddings/${scene.name}.npy',
+    });
   }
 }
 ```
@@ -291,10 +277,9 @@ class InferencePipeline {
 |------|--------|
 | yoloe-26n-seg ONNX | ~80MB |
 | ALL.pt ONNX（導航核心）| ~120MB |
-| 場景分類器 TFLite | ~10MB |
 | 紅綠燈（按需載入）| ~20MB |
-| 4 組 Embedding | ~5MB |
-| **合計** | **~235MB** |
+| 2 組 Embedding（outdoor + indoor）| ~3MB |
+| **合計** | **~223MB** |
 
 > 紅綠燈模型只在「過馬路模式」啟動時載入，結束後立即釋放。
 
@@ -304,8 +289,8 @@ class InferencePipeline {
 
 ```
 Week 1：PC 端準備
+  [ ] 執行 compute_walk_embeddings.py，產出 outdoor.npy / indoor.npy
   [ ] 匯出 ALL.pt → ONNX，確認精度無損
-  [ ] 執行 compute_embeddings.py，產出 4 組 .npy
   [ ] 紅綠燈資料集整理（台灣路口拍攝 100 張）
   [ ] 1-epoch 測試存檔（確認中文路徑地雷沒踩）
 
@@ -320,10 +305,10 @@ Week 3：Flutter 整合
   [ ] FPS 基準測試（目標：中階手機 10+ FPS）
 
 Week 4：場景切換
-  [ ] 場景分類器訓練並匯出 TFLite
-  [ ] 三層融合邏輯實作
-  [ ] GPS 地標資料庫建置
-  [ ] 端對端測試
+  [ ] GPS 精度場景切換實作
+  [ ] 物件觸發切換實作
+  [ ] 兩層融合邏輯整合測試
+  [ ] 端對端實地測試（室外街道 + 室內建築）
 
 Week 5：調整優化
   [ ] Embedding 切換延遲測試
@@ -340,7 +325,8 @@ Week 5：調整優化
 | ONNX Runtime 不支援 yoloe-26n-seg 某層 | 中 | 先用 Python onnxruntime 驗證再轉 Flutter |
 | 中階手機 FPS 不達標（< 5 FPS）| 中 | 降輸入解析度至 320×320，或每 2 幀推一次 |
 | Embedding 切換時閃爍誤報 | 低 | 切換期間暫停語音播報 0.5 秒 |
-| GPS 室內失效 | 高（已知）| 室內完全靠 Layer 2+3，GPS 僅戶外輔助 |
+| GPS 室內精度值不穩定 | 中 | 加連續 3 次確認防抖；物件觸發可補償 |
+| GPS 在騎樓/地下室出入口誤判 | 中 | 10~25m 區間維持現有場景不切換 |
 
 ---
 
@@ -351,7 +337,7 @@ Week 5：調整優化
 | `model/yoloe-26n-seg.pt` | 已下載，待匯出 ONNX |
 | `model/ALL.pt` | 待匯出 ONNX |
 | `YOLO測試場/taiwan_trafficlight-v1.pt` | 紅綠燈微調參考基準 |
-| `yolo_標籤.txt` | 教室/賣場/室內標籤來源 |
+| `yolo_標籤.txt` | 教室/賣場/室內標籤參考（未來場景擴充備用）|
 | `obstacle_detector_client.py` | 伺服器端避障邏輯（手機化後可廢棄）|
 
 ---
@@ -362,7 +348,7 @@ Week 5：調整優化
 
 ### A.1 入口位置
 
-在 Flutter APP 管理員設定頁（`ServerConfig.jsx` 對應的 APP 端設定畫面）新增一個按鈕：
+在 Flutter APP 管理員設定頁新增一個按鈕：
 
 ```
 設定頁
@@ -388,7 +374,7 @@ Week 5：調整優化
 │       └───────────┘            │
 │                                 │
 │  ┄┄┄┄┄┄ 半透明控制列 ┄┄┄┄┄┄┄  │  ← 底部半透明，不擋畫面
-│  [戶外] [室內]   FPS:12  偵測:3 │
+│  [路上] [室內]   FPS:12  偵測:3 │
 │  conf [──●──] 0.25             │
 │  [截圖]              [✕ 返回]  │
 └─────────────────────────────────┘
@@ -404,25 +390,22 @@ class YoloeArTestScreen extends StatefulWidget { ... }
 class _YoloeArTestScreenState extends State<YoloeArTestScreen> {
   late CameraController _camera;
   late OnnxModel _yoloeModel;
-  EmbeddingSet _currentScene = EmbeddingSet.outdoor;
+  Scene _currentScene = Scene.outdoor;
   double _confThreshold = 0.25;
   List<Detection> _detections = [];
   int _fps = 0;
 
-  // 載入模型（僅此頁面使用，離開後釋放）
   Future<void> _initModel() async {
     _yoloeModel = await OnnxModel.load('assets/models/yoloe_26n_seg.onnx');
-    await _switchScene(EmbeddingSet.outdoor);
+    await _switchScene(Scene.outdoor);
   }
 
-  // 切換場景 embedding
-  Future<void> _switchScene(EmbeddingSet scene) async {
+  Future<void> _switchScene(Scene scene) async {
     final emb = await EmbeddingLoader.load(scene);
     _yoloeModel.setEmbedding(emb);
     setState(() => _currentScene = scene);
   }
 
-  // 每幀推論
   void _onCameraFrame(CameraImage image) async {
     final result = await _yoloeModel.infer(image, conf: _confThreshold);
     setState(() => _detections = result.detections);
@@ -430,15 +413,13 @@ class _YoloeArTestScreenState extends State<YoloeArTestScreen> {
 
   @override
   void dispose() {
-    _yoloeModel.release();  // ← 離開頁面立即釋放，不影響主系統
+    _yoloeModel.release();  // 離開頁面立即釋放，不影響主系統
     super.dispose();
   }
 }
 ```
 
 ### A.4 標籤中英對照表（完整）
-
-推論輸出的英文 label → 顯示在 AR 畫面的繁體中文：
 
 ```dart
 // lib/constants/yoloe_label_zh.dart
@@ -468,22 +449,15 @@ const Map<String, String> YOLOE_LABEL_ZH = {
   'bag': '包包', 'suitcase': '行李箱', 'backpack': '背包',
   // 家具
   'chair': '椅子', 'table': '桌子', 'office chair': '辦公椅',
-  'sofa': '沙發', 'desk': '書桌',
+  'sofa': '沙發', 'desk': '書桌', 'stool': '圓椅',
+  'dining table': '餐桌',
   // 室內障礙
-  'glass wall': '玻璃牆', 'threshold': '門檻',
-  'power cord': '電源線', 'cable': '電線',
-  'wet floor sign': '小心地滑',
-  // 賣場
-  'shopping cart': '購物車', 'shopping basket': '購物籃',
-  'display shelf': '貨架', 'checkout counter': '結帳櫃台',
-  'refrigerator door': '冰箱門',
-  // 教室
-  'whiteboard': '白板', 'projector': '投影機',
-  'student desk': '課桌', 'stacking chair': '折疊椅',
-  'laptop': '筆電', 'textbook': '課本',
+  'glass wall': '玻璃牆', 'glass partition': '玻璃隔板',
+  'threshold': '門檻', 'power cord': '電源線', 'cable': '電線',
+  'wet floor sign': '小心地滑', 'umbrella': '雨傘',
   // 通用
   'obstacle': '障礙物', 'object': '物體',
-  'ladder': '梯子', 'table': '桌子',
+  'ladder': '梯子', 'traffic cone': '交通錐',
 };
 
 String labelZh(String en) => YOLOE_LABEL_ZH[en.toLowerCase()] ?? en;
@@ -532,7 +506,6 @@ class DetectionPainter extends CustomPainter {
       textDirection: TextDirection.ltr,
     )..layout();
 
-    // 背景色塊
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(pos.dx, pos.dy - 20, tp.width + 8, 22),
@@ -548,13 +521,13 @@ class DetectionPainter extends CustomPainter {
 ### A.6 全螢幕相機實作
 
 ```dart
-// 全螢幕相機：覆蓋系統 UI、無邊框
 @override
 Widget build(BuildContext context) {
   return Scaffold(
     backgroundColor: Colors.black,
+    extendBodyBehindAppBar: true,  // 延伸到系統列後方
     body: Stack(
-      fit: StackFit.expand,  // ← 強制填滿整個螢幕
+      fit: StackFit.expand,  // 強制填滿整個螢幕
       children: [
         // 1. 相機預覽（全螢幕）
         CameraPreview(_camera),
@@ -570,23 +543,25 @@ Widget build(BuildContext context) {
           ),
         ),
 
-        // 3. 底部半透明控制列（不擋畫面）
+        // 3. 底部半透明控制列
         Positioned(
           bottom: 0, left: 0, right: 0,
           child: Container(
             color: Colors.black.withOpacity(0.5),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Column(children: [
-              // 場景切換 + 狀態
               Row(children: [
-                _sceneBtn('戶外', EmbeddingSet.outdoor),
-                _sceneBtn('室內', EmbeddingSet.indoor),
+                _sceneBtn('路上', Scene.outdoor),
+                _sceneBtn('室內', Scene.indoor),
                 const Spacer(),
-                Text('FPS: $_fps', style: const TextStyle(color: Colors.white)),
+                // FPS + 效能監控（右上角旁邊，僅 AR 測試頁 + debug 畫面顯示）
+                Text(
+                  'FPS:$_fps  CPU:$_cpuPercent%  RAM:${_ramFreeMB}MB  $_tempC°C',
+                  style: const TextStyle(color: Colors.greenAccent, fontSize: 11),
+                ),
                 const SizedBox(width: 8),
-                Text('偵測: ${_detections.length}', style: const TextStyle(color: Colors.white)),
+                Text('偵測:${_detections.length}', style: const TextStyle(color: Colors.white)),
               ]),
-              // conf 滑桿
               Row(children: [
                 const Text('門檻', style: TextStyle(color: Colors.white70, fontSize: 12)),
                 Expanded(child: Slider(
@@ -611,12 +586,33 @@ Widget build(BuildContext context) {
         ),
       ],
     ),
-    extendBodyBehindAppBar: true,  // ← 延伸到系統列後方
   );
 }
+
+// 效能監控（每秒讀取一次，讀系統檔不做運算）
+Timer? _perfTimer;
+int _cpuPercent = 0;
+int _ramFreeMB = 0;
+int _tempC = 0;
+
+void _startPerfMonitor() {
+  _perfTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+    final cpu  = await _readCpuUsage();
+    final ram  = await _readRamFreeMB();
+    final temp = await _readTempC();
+    if (mounted) setState(() { _cpuPercent = cpu; _ramFreeMB = ram; _tempC = temp; });
+  });
+}
+
+// 讀 /proc/stat 計算 CPU 使用率
+Future<int> _readCpuUsage() async { ... }
+// 讀 /proc/meminfo 取得可用 RAM
+Future<int> _readRamFreeMB() async { ... }
+// 讀 /sys/class/thermal/thermal_zone0/temp 取得溫度
+Future<int> _readTempC() async { ... }
 ```
 
-### A.5 程式碼測試責任（Claude 負責）
+### A.7 程式碼測試責任（Claude 負責）
 
 ```python
 # test_yoloe26n_server.py（PC 端驗證，確保模型行為正確再送 Flutter）
@@ -625,7 +621,6 @@ import numpy as np, json, torch
 from ultralytics import YOLOE
 
 def test_embedding_load():
-    """驗證 embedding 可正確載入並 set_classes"""
     model = YOLOE('model/yoloe-26n-seg.pt')
     for scene in ['outdoor', 'indoor']:
         emb = torch.from_numpy(np.load(f'embeddings/{scene}.npy'))
@@ -635,13 +630,11 @@ def test_embedding_load():
     print('embedding 載入測試 ✓')
 
 def test_inference_shape(img_path: str):
-    """驗證推論輸出有 boxes 和 masks"""
     import cv2
     model = YOLOE('model/yoloe-26n-seg.pt')
     emb = torch.from_numpy(np.load('embeddings/outdoor.npy'))
     labels = json.load(open('embeddings/outdoor_labels.json', encoding='utf-8'))
     model.set_classes(labels, emb)
-
     img = cv2.imread(img_path)
     r = model.predict(img, conf=0.25, verbose=False)[0]
     assert r.boxes is not None, '無 boxes 輸出'
@@ -649,11 +642,9 @@ def test_inference_shape(img_path: str):
     print(f'推論測試 ✓  偵測 {len(r.boxes)} 個物件')
 
 def test_scene_switch_latency():
-    """量測 embedding 切換延遲"""
     import time
     model = YOLOE('model/yoloe-26n-seg.pt')
-    scenes = ['outdoor', 'indoor']
-    for scene in scenes:
+    for scene in ['outdoor', 'indoor']:
         emb = torch.from_numpy(np.load(f'embeddings/{scene}.npy'))
         labels = json.load(open(f'embeddings/{scene}_labels.json', encoding='utf-8'))
         t0 = time.perf_counter()
@@ -663,7 +654,7 @@ def test_scene_switch_latency():
 
 if __name__ == '__main__':
     test_embedding_load()
-    test_inference_shape('YOLO測試場/test_image.jpg')  # 準備一張測試圖
+    test_inference_shape('YOLO測試場/test_image.jpg')
     test_scene_switch_latency()
 ```
 
@@ -696,9 +687,6 @@ FastAPI 伺服器（port 8081-8084）
     ├── LLM（場景描述、語音對話）
     ├── TTS（Gemini TTS / WaveNet）
     └── NavigationMaster 狀態機
-    │
-    ▼
-語音 + 指令回傳 ESP32
 ```
 
 ### B.2 手機 YOLO 後的架構（伺服器變輕）
@@ -708,39 +696,28 @@ FastAPI 伺服器（port 8081-8084）
     ├── yoloe-26n-seg ONNX  ← 避障推論（本地）
     ├── yolo26n-seg ONNX    ← 紅綠燈（本地）
     ├── ALL.pt ONNX         ← 盲道/curb（本地）
-    ├── 場景分類器 TFLite   ← 場景切換（本地）
     └── TTS WAV 預錄音檔    ← 基本語音（本地）
-         │
          │ 只在需要時才上傳（省頻寬）
          ▼
 FastAPI 伺服器（精簡版）
     ├── ASR（語音對話觸發時）
     ├── LLM（場景描述、複雜問答）   ← 保留，手機算力不夠
-    ├── 高品質 TTS（WaveNet/Gemini）← 保留，複雜語音
-    ├── NavigationMaster 狀態機     ← 保留，邏輯複雜
+    ├── 高品質 TTS（WaveNet/Gemini）← 保留
+    ├── NavigationMaster 狀態機     ← 保留
     └── 用戶資料/聯絡人/設定同步    ← 保留
 ```
 
 ### B.3 伺服器需要新增的 API
 
-手機有了本地 YOLO 後，伺服器需要新增以下端點配合：
-
 ```python
-# 新增端點（app_main.py 擴充）
-
 # 1. 手機回報偵測結果 → 伺服器做高層決策
 @app.post("/api/mobile/detections")
 async def receive_mobile_detections(payload: MobileDetectionPayload):
-    """
-    手機每秒回報偵測到的物件清單
-    伺服器根據此資訊觸發：場景描述、危險警告、導航指令
-    """
     detections = payload.detections   # [{label, conf, position}, ...]
     scene = payload.scene             # outdoor / indoor
-    # 判斷是否需要 LLM 場景描述
     if _needs_description(detections):
         asyncio.create_task(_trigger_description(detections))
-    return {"action": "none"}  # 或 {"action": "tts", "text": "前方有人"}
+    return {"action": "none"}
 
 # 2. 手機請求場景描述
 @app.post("/api/mobile/describe_scene")
@@ -751,8 +728,7 @@ async def describe_scene(image: UploadFile):
 # 3. Embedding 版本管理（手機定期同步）
 @app.get("/api/mobile/embeddings/version")
 async def get_embedding_version():
-    """讓手機知道 embedding 有無更新需要下載"""
-    return {"version": EMBEDDING_VERSION, "scenes": ["outdoor", "indoor", "market", "classroom"]}
+    return {"version": EMBEDDING_VERSION, "scenes": ["outdoor", "indoor"]}
 
 @app.get("/api/mobile/embeddings/{scene}")
 async def download_embedding(scene: str):
@@ -760,7 +736,7 @@ async def download_embedding(scene: str):
     ...
 ```
 
-### B.4 伺服器不再需要做的事（可逐步移除）
+### B.4 伺服器不再需要做的事
 
 | 功能 | 現在 | 手機 YOLO 後 |
 |------|------|-------------|
@@ -773,14 +749,14 @@ async def download_embedding(scene: str):
 | 高品質 TTS | ✅ 伺服器 | ✅ 保留 |
 | NavigationMaster | ✅ 伺服器 | ✅ 保留（或部分移植）|
 
-### B.5 過渡期策略（不硬切）
+### B.5 過渡期策略
 
 ```
 Stage 1（現在）：ALL.pt 在伺服器，yoloe-26n-seg 在 APP 測試
     ↓ yoloe-26n-seg 驗收通過
 Stage 2：APP 主用 yoloe-26n-seg 避障，伺服器 ALL.pt 仍保留作備援
     ↓ 穩定運行 2 週
-Stage 3：伺服器移除 YOLO 推論，改為輕量化；APP 完全本地 YOLO
+Stage 3：伺服器移除 YOLO 推論；APP 完全本地 YOLO
 ```
 
 ---
@@ -790,11 +766,11 @@ Stage 3：伺服器移除 YOLO 推論，改為輕量化；APP 完全本地 YOLO
 ```
 【立即可做】
 Phase A：
-  [ ] A1. 計算 outdoor.npy / indoor.npy（compute_walk_embeddings.py）
+  [ ] A1. 執行 compute_walk_embeddings.py → 產出 outdoor.npy / indoor.npy
   [ ] A2. 執行 test_yoloe26n_server.py → 全部測試通過
   [ ] A3. Flutter APP 新增管理員入口按鈕
   [ ] A4. 實作 YoloeArTestScreen（相機 + AR 疊加 + 場景切換）
-  [ ] A5. 開發者手動驗收（戶外/室內實地測試）
+  [ ] A5. 開發者手動驗收（路上實地 + 室內建築實地）
 
 【A 驗收通過後】
 Phase 1-4（原計畫）：
@@ -804,6 +780,5 @@ Phase 1-4（原計畫）：
 Phase B：
   [ ] B1. 新增 /api/mobile/detections 端點
   [ ] B2. 新增 embedding 版本管理端點
-  [ ] B3. 設計手機→伺服器的決策協議
-  [ ] B4. Stage 2 過渡測試（雙軌並行）
+  [ ] B3. Stage 2 過渡測試（雙軌並行）
 ```

@@ -63,6 +63,7 @@ class YoloeInference {
 
   OrtSession? _session;
   List<String> _labels = const [];
+  String _inputName = 'images';    // 動態讀自模型 metadata，避免匯出名稱差異
   bool _busy = false;             // 上一幀尚未推完 → 本幀 skip
   bool _disposed = false;          // 防止 release 後仍被呼叫 infer
   int _debugCnt = 0;               // throttle debug log
@@ -85,9 +86,13 @@ class YoloeInference {
     final opts = OrtSessionOptions();
     _session = OrtSession.fromBuffer(modelBytes, opts);
     opts.release();
+    // 動態取得 ONNX 輸入節點名稱，避免匯出時名稱不是 'images'
+    final names = _session!.inputNames;
+    _inputName = names.isNotEmpty ? names.first : 'images';
 
     final labelStr = await rootBundle.loadString(labelAsset);
     _labels = (jsonDecode(labelStr) as List).cast<String>();
+    debugPrint('[YoloeInference] 模型輸入名稱: $_inputName, 標籤數: ${_labels.length}');
   }
 
   /// 安全釋放：先擋掉新的 infer，再等正在跑的 native runAsync 結束，最後才 release。
@@ -140,7 +145,7 @@ class YoloeInference {
       );
       final runOpts = OrtRunOptions();
       final List<OrtValue?>? rawOutputs =
-          await _session!.runAsync(runOpts, {'images': input});
+          await _session!.runAsync(runOpts, {_inputName: input});
       input.release();
       runOpts.release();
 
