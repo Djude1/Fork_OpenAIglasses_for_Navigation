@@ -194,8 +194,8 @@ class YoloeInference {
         scale: pre.scale,
         padX: pre.padX,
         padY: pre.padY,
-        srcW: srcW,
-        srcH: srcH,
+        effW: pre.effW,
+        effH: pre.effH,
         confTh: confTh,
         iouTh: _iouTh,
         labels: _labels,
@@ -213,6 +213,9 @@ class YoloeInference {
           'scale=${pre.scale.toStringAsFixed(3)} '
           'pad=(${pre.padX},${pre.padY}) '
           'globalMax=${decoded.globalMaxConf.toStringAsFixed(3)} '
+          'top3=[${decoded.dbgTop3}] '
+          'confPass=${decoded.dbgConfPass} nmsKeep=${decoded.dbgNmsKeep} '
+          'box=${decoded.dbgBox} area=${decoded.dbgArea} wl=${decoded.dbgWl} '
           'dets=${decoded.detections.length} '
           'first=${first == null ? "none" : "${first.label} ${(first.confidence * 100).toInt()}% poly=${first.polygon?.length ?? 0}pt"}',
         );
@@ -301,11 +304,14 @@ class _PreRes {
   final Float32List data;
   final double scale;
   final int padX, padY;
+  final int effW, effH;  // 旋轉後送入模型的有效尺寸（effW=原srcH, effH=原srcW）
   const _PreRes({
     required this.data,
     required this.scale,
     required this.padX,
     required this.padY,
+    required this.effW,
+    required this.effH,
   });
 }
 
@@ -352,20 +358,28 @@ _PreRes _preprocessIsolate(_PreReq req) {
     }
   }
 
-  // 2. Letterbox：等比 resize 貼到 114 背景
+  // 2. 旋轉 90° CW：Android 後鏡頭 sensor 橫向傳送，直立持機時 YOLO 收到側倒影像
+  //    (max conf≈0.06)；旋轉後人物直立，conf 可回到正常水準（0.5+）。
+  //    img.copyRotate 正角度=CCW，angle:-90 = 90° CW；大多數 Android 後鏡頭適用。
+  //    若旋轉後仍無偵測，嘗試 angle:90（少數裝置 sensor 方向相反）。
   final src = img.Image.fromBytes(
     width: w,
     height: h,
     bytes: rgb.buffer,
     order: img.ChannelOrder.rgb,
   );
-  final r = (_kImgsz / w) < (_kImgsz / h) ? _kImgsz / w : _kImgsz / h;
-  final newW = (w * r).round();
-  final newH = (h * r).round();
+  final rotated = img.copyRotate(src, angle: -90);
+  final rW = rotated.width;   // = h（原 landscape H → portrait W，e.g. 720）
+  final rH = rotated.height;  // = w（原 landscape W → portrait H，e.g. 1280）
+
+  // 3. Letterbox：等比 resize 貼到 114 背景
+  final r = (_kImgsz / rW) < (_kImgsz / rH) ? _kImgsz / rW : _kImgsz / rH;
+  final newW = (rW * r).round();
+  final newH = (rH * r).round();
   final padX = (_kImgsz - newW) ~/ 2;
   final padY = (_kImgsz - newH) ~/ 2;
 
-  final resized = img.copyResize(src,
+  final resized = img.copyResize(rotated,
       width: newW, height: newH, interpolation: img.Interpolation.linear);
   final canvas = img.Image(width: _kImgsz, height: _kImgsz);
   img.fill(canvas, color: img.ColorRgb8(114, 114, 114));
@@ -380,7 +394,7 @@ _PreRes _preprocessIsolate(_PreReq req) {
     out[n + i] = bytes[i * 3 + 1] / 255.0;     // G
     out[2 * n + i] = bytes[i * 3 + 2] / 255.0; // B
   }
-  return _PreRes(data: out, scale: r, padX: padX, padY: padY);
+  return _PreRes(data: out, scale: r, padX: padX, padY: padY, effW: rW, effH: rH);
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -396,7 +410,7 @@ class _DecodeReq {
   final int numAnchors;          // 通常 8400
   final double scale;
   final int padX, padY;
-  final int srcW, srcH;
+  final int effW, effH;  // 旋轉後有效尺寸（portrait：effW=原srcH, effH=原srcW）
   final double confTh, iouTh;
   final List<String> labels;
   final int imgsz;
@@ -415,8 +429,8 @@ class _DecodeReq {
     required this.scale,
     required this.padX,
     required this.padY,
-    required this.srcW,
-    required this.srcH,
+    required this.effW,
+    required this.effH,
     required this.confTh,
     required this.iouTh,
     required this.labels,
@@ -427,11 +441,20 @@ class _DecodeReq {
   });
 }
 
-// _decodeIsolate 回傳結構：偵測結果 + 全域最高分（診斷用）
+// _decodeIsolate 回傳結構：偵測結果 + 全域最高分 + 各過濾器計數（診斷用）
 class _DecodeResult {
   final List<Detection> detections;
   final double globalMaxConf;
-  const _DecodeResult(this.detections, this.globalMaxConf);
+  final int dbgConfPass;  // 通過 confTh 的候選數
+  final int dbgNmsKeep;   // NMS 後保留數
+  final int dbgBox;       // box 無效被丟棄數
+  final int dbgArea;      // areaRatio 超標被丟棄數
+  final int dbgWl;        // whitelist 不符被丟棄數
+  final String dbgTop3;   // 全域最高信心的前三個類別（類名:分數），不受 confTh 限制
+  const _DecodeResult(this.detections, this.globalMaxConf,
+      {this.dbgConfPass = 0, this.dbgNmsKeep = 0,
+       this.dbgBox = 0, this.dbgArea = 0, this.dbgWl = 0,
+       this.dbgTop3 = ''});
 }
 
 _DecodeResult _decodeIsolate(_DecodeReq req) {
@@ -447,14 +470,34 @@ _DecodeResult _decodeIsolate(_DecodeReq req) {
   final ids = <int>[];
   final anchors = <int>[];
 
-  // 掃描全域最高信心分數（回傳給主執行緒顯示，方便診斷）
+  // 掃描全域最高信心分數並追蹤 top-3 類別（回傳給主執行緒顯示，方便診斷）
   double globalMax = 0.0;
+  double t0 = 0.0, t1 = 0.0, t2 = 0.0;
+  int ti0 = -1, ti1 = -1, ti2 = -1;
   for (int a = 0; a < na; a++) {
     for (int c = 0; c < nc; c++) {
       final s = req.output0[(4 + c) * na + a];
       if (s > globalMax) globalMax = s;
+      if (s > t2) {
+        if (s > t0) {
+          t2 = t1; ti2 = ti1; t1 = t0; ti1 = ti0; t0 = s; ti0 = c;
+        } else if (s > t1) {
+          t2 = t1; ti2 = ti1; t1 = s; ti1 = c;
+        } else {
+          t2 = s; ti2 = c;
+        }
+      }
     }
   }
+  final top3buf = StringBuffer();
+  for (int k = 0; k < 3; k++) {
+    final id = k == 0 ? ti0 : (k == 1 ? ti1 : ti2);
+    final sc = k == 0 ? t0 : (k == 1 ? t1 : t2);
+    if (id < 0) break;
+    if (top3buf.isNotEmpty) top3buf.write(',');
+    top3buf.write('${req.labels[id]}:${sc.toStringAsFixed(3)}');
+  }
+  final top3str = top3buf.toString();
 
   for (int a = 0; a < na; a++) {
     double maxConf = 0.0;
@@ -488,34 +531,32 @@ _DecodeResult _decodeIsolate(_DecodeReq req) {
       req.output1.length == 32 * req.maskHW * req.maskHW;
 
   // ── 2. 對每個 keep 解 mask binary（在 mask 160 box 範圍內），抽 contour，
-  //      座標反推 + 旋轉 → portrait polygon ──
+  //      座標反推 → portrait polygon ──
   final dets = <Detection>[];
   final coef = Float32List(32);
   final mhw = req.maskHW * req.maskHW;
   final ms = req.maskScale.toDouble();
   final maxLI = (req.imgsz - 1).toDouble();
-  final srcWf = req.srcW.toDouble();
-  final srcHf = req.srcH.toDouble();
+  final srcWf = req.effW.toDouble();  // portrait 寬（旋轉後 effW = 原 srcH）
+  final srcHf = req.effH.toDouble();  // portrait 高（旋轉後 effH = 原 srcW）
+
+  // 診斷計數器（每幀都印，方便即時定位過濾瓶頸）
+  int dbgBox = 0, dbgArea = 0, dbgWl = 0;
 
   for (final i in keep) {
     final a = anchors[i];
 
-    // 還原 box 至 portrait（painter 用得到，且 polygon 失敗時退回畫框）
+    // 還原 box 至 portrait（letterbox 反轉；preprocess 已旋轉，不需再旋轉）
     double bx1 = (boxes[i][0] - req.padX) / req.scale;
     double by1 = (boxes[i][1] - req.padY) / req.scale;
     double bx2 = (boxes[i][2] - req.padX) / req.scale;
     double by2 = (boxes[i][3] - req.padY) / req.scale;
     if (bx1 < 0) bx1 = 0;
     if (by1 < 0) by1 = 0;
-    if (bx2 > srcWf) bx2 = srcWf;
-    if (by2 > srcHf) by2 = srcHf;
-    if (bx2 <= bx1 || by2 <= by1) continue;
-    final boxPort = Rect.fromLTWH(
-      srcHf - by2,
-      bx1,
-      by2 - by1,
-      bx2 - bx1,
-    );
+    if (bx2 > srcWf) bx2 = srcWf;  // clamp to portrait W
+    if (by2 > srcHf) by2 = srcHf;  // clamp to portrait H
+    if (bx2 <= bx1 || by2 <= by1) { dbgBox++; continue; }
+    final boxPort = Rect.fromLTWH(bx1, by1, bx2 - bx1, by2 - by1);
 
     List<Offset>? polygon;
     int maskFgCount = 0;   // 前景像素數：算 area_ratio 用；無 mask 時退回 box 面積
@@ -570,16 +611,15 @@ _DecodeResult _decodeIsolate(_DecodeReq req) {
         if (raw.length >= 6) {
           // 抽樣 + 從 mask160 → letterbox → src → portrait
           final pts = <Offset>[];
-          for (int k = 0; k < raw.length; k += req.polyStride) {
+          for (int k = 0; k < raw.length ~/ 2; k += req.polyStride) {
             final mx = raw[k * 2];
             final my = raw[k * 2 + 1];
             // mask 中心對應 letterbox 中心
             final lx = (mx + 0.5) * ms;
             final ly = (my + 0.5) * ms;
-            final sx = (lx - req.padX) / req.scale;
-            final sy = (ly - req.padY) / req.scale;
-            // 90° CW 旋轉到 portrait：(rotX, rotY) = (srcH - 1 - sy, sx)
-            pts.add(Offset(srcHf - 1 - sy, sx));
+            final px = (lx - req.padX) / req.scale;
+            final py = (ly - req.padY) / req.scale;
+            pts.add(Offset(px, py));
           }
           if (pts.length >= 3) polygon = pts;
         }
@@ -596,15 +636,13 @@ _DecodeResult _decodeIsolate(_DecodeReq req) {
     } else {
       areaRatio = (bx2 - bx1) * (by2 - by1) / (srcWf * srcHf);
     }
-    if (areaRatio > 0.7) continue;
+    if (areaRatio > 0.9) { dbgArea++; continue; }
 
-    // bottom_y_ratio：portrait 顯示下的 y 最大 / portrait 高。
-    // 旋轉 90° CW 後 portrait y = src x、portrait height = srcW，
-    // 所以 box 在 portrait 最底 = bx2（src x 最大），比值 = bx2 / srcW。
-    final bottomYRatio = bx2 / srcWf;
+    // bottom_y_ratio：portrait 底邊 y（by2）/ portrait 高（effH）
+    final bottomYRatio = by2 / srcHf;
 
     final label = req.labels[ids[i]];
-    if (!_kObstacleWhitelist.contains(label)) continue;
+    if (!_kObstacleWhitelist.contains(label)) { dbgWl++; continue; }
 
     dets.add(Detection(
       label: label,
@@ -616,7 +654,10 @@ _DecodeResult _decodeIsolate(_DecodeReq req) {
     ));
   }
 
-  return _DecodeResult(dets, globalMax);
+  return _DecodeResult(dets, globalMax,
+      dbgConfPass: boxes.length, dbgNmsKeep: keep.length,
+      dbgBox: dbgBox, dbgArea: dbgArea, dbgWl: dbgWl,
+      dbgTop3: top3str);
 }
 
 // ── Moore neighbor tracing：8-connectivity 外輪廓 ─────────────────────
