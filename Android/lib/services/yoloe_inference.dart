@@ -1,12 +1,12 @@
 // lib/services/yoloe_inference.dart
-// 手機端 yoloe-26m-seg ONNX 推論管線（避障偵測模式）
+// 手機端 yoloe-26l-seg ONNX 推論管線（避障偵測模式）
 // 對應計畫：MD/plan_mobile_yolo_deployment.md Phase 3.1
 //
 // 定位：只做「避開障礙」— 偵測白名單類別 → 回傳 box +
 //       area_ratio + bottom_y_ratio，交給 painter 依「近紅遠黃、只描邊」畫。
 //       不做室內/室外區分（以後若要再加，另開切換）。
 //
-// 模型：yoloe-26m-seg.onnx（seg 模型，output0=[1,4+nc+32,8400]，output1 mask proto）
+// 模型：yoloe-26l-seg.onnx（seg 模型，output0=[1,4+nc+32,8400]，output1 mask proto）
 //       偵測模式：只讀 output0，output1 完全忽略（省略 proto flatten ~150ms）。
 //
 // 流程：CameraImage(YUV420) → 主 isolate copy plane bytes
@@ -66,7 +66,7 @@ class YoloeInference {
 
   Future<void> init() async {
     OrtEnv.instance.init();
-    const modelAsset = 'assets/models/yoloe_26m_seg_outdoor.onnx';
+    const modelAsset = 'assets/models/yoloe_26l_seg_outdoor.onnx';
     const labelAsset = 'assets/models/outdoor_labels.json';
 
     final modelBytes =
