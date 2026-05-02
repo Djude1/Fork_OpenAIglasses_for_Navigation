@@ -71,6 +71,21 @@ class AppProvider extends ChangeNotifier {
   bool _wakeWordEnabled = false;
   bool get wakeWordEnabled => _wakeWordEnabled;
 
+  // ── ASR 收音狀態 ───────────────────────────────────────────────────────────
+  // "standby"    → 待機中，等待喚醒詞或靜音
+  // "listening"  → 正在聆聽使用者的語音指令
+  // "processing" → 語音已送出，等待 AI 回應
+  String _asrState = 'standby';
+  String get asrState => _asrState;
+  bool get isListening => _asrState == 'listening';
+
+  // ── ASR 辨識文字追蹤 ──────────────────────────────────────────────────────
+  String _asrPartialText = '';          // 即時辨識中的文字
+  String get asrPartialText => _asrPartialText;
+
+  final List<String> _asrFinals = [];   // 辨識完成的歷史紀錄（最近 30 筆）
+  List<String> get asrFinals => List.unmodifiable(_asrFinals);
+
   // ── 方位播報模式 ───────────────────────────────────────────────────────────
   // "clock"    → 時鐘方向（如：3點鐘方向）
   // "cardinal" → 前後左右（如：左前方）
@@ -509,6 +524,9 @@ class AppProvider extends ChangeNotifier {
     await _audio.stopForegroundService();
     stopPollingNavState();
     _connected = false;
+    _asrState = 'standby';
+    _asrPartialText = '';
+    _asrFinals.clear();
     notifyListeners();
   }
 
@@ -519,6 +537,10 @@ class AppProvider extends ChangeNotifier {
       final s = msg.substring(10);
       if (s != _navState) {
         _navState = s;
+        // 導航狀態變更表示指令已處理完畢，ASR 回到待機
+        if (_asrState == 'processing') {
+          _asrState = 'standby';
+        }
         notifyListeners();
       }
       return;
@@ -526,11 +548,49 @@ class AppProvider extends ChangeNotifier {
     // 伺服器每 30 秒發送的保活訊號，不顯示在訊息記錄中
     if (msg == 'PING') return;
 
+    // INIT: WebSocket 連線時伺服器推送初始 ASR 狀態
+    if (msg.startsWith('INIT:')) {
+      try {
+        final payload = jsonDecode(msg.substring(5)) as Map<String, dynamic>;
+        _asrPartialText = (payload['partial'] as String?) ?? '';
+        final finals = payload['finals'] as List?;
+        if (finals != null) {
+          _asrFinals.clear();
+          _asrFinals.addAll(finals.map((e) => e.toString()));
+        }
+        notifyListeners();
+      } catch (_) {}
+      return;
+    }
+
     // SPEAK: 本地語音播放（伺服器命中預錄 WAV 時推送）
     // 格式：SPEAK:{"text":"請向左平移","duration_ms":1640}
     if (msg.startsWith('SPEAK:')) {
       _handleSpeakMessage(msg.substring(6));
       return;
+    }
+
+    // PARTIAL: 語音正在辨識中 → ASR 進入聆聽狀態
+    // 旁路模式下伺服器不推 SPEAK:開始對話，需靠 PARTIAL 偵測
+    if (msg.startsWith('PARTIAL:')) {
+      final partialText = msg.substring(8).trim();
+      _asrPartialText = partialText;
+      if (partialText.isNotEmpty && partialText != '（已開始接收音訊…）') {
+        _updateAsrState('listening');
+      }
+      notifyListeners();
+    }
+
+    // FINAL: 語音辨識完成 → ASR 進入處理中狀態
+    if (msg.startsWith('FINAL:')) {
+      final finalText = msg.substring(6).trim();
+      if (finalText.isNotEmpty) {
+        _asrFinals.add(finalText);
+        if (_asrFinals.length > 30) _asrFinals.removeAt(0);
+      }
+      _asrPartialText = '';
+      _updateAsrState('processing');
+      notifyListeners();
     }
 
     _addMessage(msg);
@@ -544,6 +604,13 @@ class AppProvider extends ChangeNotifier {
       final durationMs = (data['duration_ms'] as num?)?.toInt() ?? 2000;
       if (text.isEmpty) return;
 
+      // 追蹤 ASR 音效，更新收音狀態
+      if (text == '開始對話') {
+        _updateAsrState('listening');
+      } else if (text == '結束收音') {
+        _updateAsrState('standby');
+      }
+
       // 非同步：本地 WAV 優先，stream 靜音；未命中則放行 stream
       LocalVoiceService.instance.speak(text).then((playedMs) {
         if (playedMs != null) {
@@ -554,6 +621,30 @@ class AppProvider extends ChangeNotifier {
       });
     } catch (e) {
       debugPrint('[AppProvider] SPEAK 解析失敗: $e');
+    }
+  }
+
+  Timer? _asrProcessingTimer;
+
+  void _updateAsrState(String newState) {
+    if (_asrState != newState) {
+      _asrState = newState;
+      debugPrint('[AppProvider] ASR 狀態: $_asrState');
+
+      // processing 狀態設定 15 秒超時，自動回到 standby
+      // 避免 Omni 對話等不推送 NAV_STATE 的場景卡在 processing
+      _asrProcessingTimer?.cancel();
+      if (newState == 'processing') {
+        _asrProcessingTimer = Timer(const Duration(seconds: 15), () {
+          if (_asrState == 'processing') {
+            _asrState = 'standby';
+            debugPrint('[AppProvider] ASR 超時回到 standby');
+            notifyListeners();
+          }
+        });
+      }
+
+      notifyListeners();
     }
   }
 
@@ -824,6 +915,7 @@ class AppProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _asrProcessingTimer?.cancel();
     stopAllServices();
     _tts.stop();
     _viewerController.close();

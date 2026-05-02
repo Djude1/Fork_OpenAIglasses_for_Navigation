@@ -36,6 +36,7 @@ class _BlindScreenState extends State<BlindScreen>
   int    _prevMsgCount    = 0;
   bool?  _prevConnected;
   int    _prevImpactVersion = 0;   // 上一次消化的撞擊版本號，避免重複彈出
+  String _prevAsrState    = 'standby';  // ASR 收音狀態追蹤
 
   // DEBUG 懸浮球（僅開發人員模式顯示）
   OverlayEntry? _debugEntry;
@@ -50,6 +51,7 @@ class _BlindScreenState extends State<BlindScreen>
       _prevNavState  = app.navState;
       _prevMsgCount  = app.messageCount;
       _prevConnected = app.connected;
+      _prevAsrState  = app.asrState;
       app.addListener(_onAppChanged);
       _announce(app.connected
           ? 'AI智慧眼鏡已連線。向左滑動可進入設定頁面。'
@@ -109,6 +111,15 @@ class _BlindScreenState extends State<BlindScreen>
       final spoken = _filterMessage(app.lastMessage ?? '');
       if (spoken != null && spoken.isNotEmpty) _announce(spoken);
       _prevMsgCount = app.messageCount;
+    }
+
+    // ── ASR 收音狀態變更 ────────────────────────────────────────────────
+    if (_prevAsrState != app.asrState) {
+      _prevAsrState = app.asrState;
+      // listening 狀態由「開始對話」音效告知，不再額外 TTS 播報
+      // standby 由「結束收音」音效告知，不再額外 TTS 播報
+      // 但需要 setState 讓 UI 更新（狀態色條閃爍）
+      setState(() {});
     }
 
     // ── 消化待辦撞擊事件（前台直接觸發 / 背景返回後補觸發）───────────────
@@ -315,7 +326,7 @@ class _BlindScreenState extends State<BlindScreen>
                 HapticFeedback.selectionClick();
                 setState(() => _currentPage = i);
                 if (i == 0) _announce('首頁。導航、閱讀、緊急求救。');
-                if (i == 1) _announce('設定頁面。有緊急聯絡人、語音開關、語音速度、報位方式。向右滑動返回首頁。');
+                if (i == 1) _announce('設定頁面。有緊急聯絡人、語音開關、語音速度、報位方式、喚醒詞。向右滑動返回首頁。');
               },
               children: [
                 // ── 頁面 0：主功能（預設）─────────────────────────────────
@@ -340,6 +351,39 @@ class _BlindScreenState extends State<BlindScreen>
               left: 0, right: 0,
               child: _PageDots(current: _currentPage, total: 2),
             ),
+
+            // ── ASR 聆聽中覆蓋層（視障者無障礙提示）──────────────────────
+            if (app.isListening)
+              Positioned(
+                top: 20,
+                right: 16,
+                child: Semantics(
+                  label: '正在聆聽您的語音指令',
+                  liveRegion: true,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade800.withOpacity(0.85),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.mic, color: Colors.white, size: 20),
+                        SizedBox(width: 6),
+                        Text(
+                          '聆聽中',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -382,7 +426,7 @@ class _MainPage extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // ── 頂部狀態色條 ───────────────────────────────────────────────
-        _StatusBar(connected: app.connected, navState: app.navState),
+        _StatusBar(connected: app.connected, navState: app.navState, asrState: app.asrState),
 
         // ── 頁面標題列 ─────────────────────────────────────────────────
         Container(
@@ -755,6 +799,27 @@ class _SettingsPageState extends State<_SettingsPage> {
                   },
                 ),
 
+                const SizedBox(height: 4),
+
+                // ── 喚醒詞開關（需先說「哈囉」才收音）────────────────────
+                _BigBlock(
+                  label: '喚醒詞：${app.wakeWordEnabled ? '開啟' : '關閉'}',
+                  sublabel: app.wakeWordEnabled
+                      ? '需先說哈囉才收音　點擊關閉'
+                      : '語音直接送AI處理　點擊開啟',
+                  color: app.wakeWordEnabled
+                      ? const Color(0xFF00695C)
+                      : const Color(0xFF424242),
+                  onAnnounce: widget.onAnnounce,
+                  onAction: () {
+                    final next = !app.wakeWordEnabled;
+                    app.setWakeWordEnabled(next);
+                    widget.onAnnounce(
+                      next ? '喚醒詞已開啟，請先說哈囉再說指令' : '喚醒詞已關閉，語音直接送AI處理',
+                    );
+                  },
+                ),
+
                 // ── 切換開發者模式（僅手機開啟開發人員選項時顯示）───
                 if (_isDevMode) ...[
                   const SizedBox(height: 4),
@@ -819,15 +884,54 @@ class _TriggerButton extends StatelessWidget {
 // 共用 UI 小元件
 // ════════════════════════════════════════════════════════════════════════════
 
-class _StatusBar extends StatelessWidget {
+class _StatusBar extends StatefulWidget {
   final bool connected;
   final String navState;
-  const _StatusBar({required this.connected, required this.navState});
+  final String asrState;
+  const _StatusBar({required this.connected, required this.navState, required this.asrState});
+
+  @override
+  State<_StatusBar> createState() => _StatusBarState();
+}
+
+class _StatusBarState extends State<_StatusBar>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final navigating = !['IDLE', 'CHAT', ''].contains(navState);
-    Color c = !connected
+    final listening = widget.asrState == 'listening';
+    final navigating = !['IDLE', 'CHAT', ''].contains(widget.navState);
+
+    if (listening) {
+      return AnimatedBuilder(
+        animation: _ctrl,
+        builder: (_, __) {
+          final alpha = (120 + 135 * _ctrl.value).toInt();
+          return Container(
+            height: 6,
+            color: Color.fromARGB(alpha, 255, 179, 0),
+          );
+        },
+      );
+    }
+
+    Color c = !widget.connected
         ? Colors.grey.shade800
         : navigating
             ? Colors.green.shade700
