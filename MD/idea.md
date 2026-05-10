@@ -40,6 +40,38 @@
 
 ---
 
+## 公網部署已知問題與修復紀錄（2026-05-03）
+
+### 症狀
+APP 在本地測試正常，連公網（`aiglasses.qzz.io`）後開啟避障時畫面卡在「等待 YOLO 影像串流…」。
+
+### 根因
+`websocket_service.dart` 的 viewer WS（`/ws/viewer`）沒有重連機制：
+```dart
+onError: (_) {},  // 靜默吞掉錯誤
+onDone:  () {},   // 斷線不重連
+```
+公網比本地更容易出現連線抖動、Cloudflare Tunnel timeout，viewer WS 斷一次就永遠不重連，畫面永遠沒有 frame。
+
+**相比之下 camera WS（`/ws/camera`）有正確的重連邏輯，所以導航指令不受影響，只有畫面不顯示。**
+
+### 修復（commit 含在此 push）
+`Android/lib/services/websocket_service.dart`：
+- 新增 `_viewerActive` flag（確保 `disconnectViewer` 後不再重連）
+- 新增 `_viewerOnFrame` 儲存 callback（重連後繼續用）
+- `onError` / `onDone` 改為 `_scheduleReconnect(_doConnectViewer)`（3 秒後自動重連）
+
+### 公網部署注意事項（Cloudflare Tunnel）
+| 項目 | 說明 |
+|------|------|
+| APP 伺服器位址 | `https://aiglasses.qzz.io/device/N/`，啟用 **secure = true**（使用 wss://） |
+| WebSocket 路徑 | nginx 需設 `proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";` |
+| viewer WS 重連 | 已修復，斷線 3 秒後自動重連 |
+| camera WS 重連 | 原本即有，無問題 |
+| 已知限制 | Cloudflare Tunnel 對長時間 idle WebSocket 可能 timeout（約 100 秒），建議心跳或重連機制 |
+
+---
+
 ## 待實作：後台管理裝置 API URL
 
 ### 背景

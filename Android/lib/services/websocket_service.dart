@@ -192,8 +192,17 @@ class WebSocketService {
   // ── Viewer WS（接收 YOLO 處理後 JPEG，下行）────────────────────────────
   WebSocketChannel?   _viewerWs;
   StreamSubscription? _viewerSub;
+  bool _viewerActive = false;
+  FrameCallback? _viewerOnFrame;
 
   void connectViewer({required FrameCallback onFrame}) {
+    _viewerOnFrame = onFrame;
+    _viewerActive  = true;
+    _doConnectViewer();
+  }
+
+  void _doConnectViewer() {
+    if (!_viewerActive) return;
     _viewerWs?.sink.close();
     _viewerSub?.cancel();
     _viewerWs = WebSocketChannel.connect(
@@ -201,19 +210,21 @@ class WebSocketService {
     );
     _viewerSub = _viewerWs!.stream.listen(
       (data) {
-        if (data is List<int>) onFrame(Uint8List.fromList(data));
-        if (data is Uint8List)  onFrame(data);
+        if (data is List<int>) _viewerOnFrame!(Uint8List.fromList(data));
+        if (data is Uint8List)  _viewerOnFrame!(data);
       },
-      onError: (_) {},
-      onDone:  () {},
+      onError: (_) => _scheduleReconnect(_doConnectViewer),
+      onDone:  ()  => _scheduleReconnect(_doConnectViewer),
     );
   }
 
   void disconnectViewer() {
+    _viewerActive = false;
     _viewerSub?.cancel();
     _viewerWs?.sink.close();
-    _viewerWs  = null;
-    _viewerSub = null;
+    _viewerWs     = null;
+    _viewerSub    = null;
+    _viewerOnFrame = null;
   }
 
   // ── 全部斷線 ─────────────────────────────────────────────────────────────
