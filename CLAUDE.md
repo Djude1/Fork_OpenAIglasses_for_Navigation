@@ -1,64 +1,20 @@
 # CLAUDE.md
 
-## 快速導覽（節省 Token 的入口）
-
-**任務開始前必讀：**
-1. `MD/現況快照.md` — 目前系統狀態、半成品、已知問題、下一步
-2. `MD/規則導覽.md` — 依情境查哪些規則/Memory 檔案要讀（避免全部載入）
-
-> 不要一次把所有 Memory 檔案全部讀入。先看規則導覽，只讀與本次任務相關的檔案。
-
----
-
 ## 必須遵守的規則
 
-- 所有回覆與程式碼註解一律使用**繁體中文**
-- Python 套件管理統一使用 `uv`，禁止 `pip install`
-- 任何套件安裝在 `.venv` 內執行，禁止污染系統環境
-- 所有 `.md` 文件（除本檔與 `README.md`）統一放 `MD/` 資料夾
-- Windows 環境：Shell 為 bash，`jq` 未安裝請用 `node -e` 替代
+- 所有回覆一律使用**繁體中文**，程式碼註釋也是
+- 絕對不能洩漏任何與使用者相關的個資或訊息
 
-## 可用 Skills（Agent 自動觸發，不需手動輸入）
+## 環境隔離
 
-| 指令 | 用途 | 自動觸發時機 |
-|------|------|------------|
-| `/check` | 修改前確認、修改後驗證、API 直打測試規範 | Python 程式碼修改時 |
-| `/delete` | 刪除檔案前的四步驟安全確認 | 說到刪除/移除任何檔案時 |
-| `/pre-commit` | commit 前禁止項目確認清單 | push 前 |
-| `/handover` | 交接資料更新檢查 + voice_missing_log 處理 | 對話開始時（自動 git pull → 處理 voice_missing_log/） |
-| `/update-md` | 更新 idea.md / MEMORY.md 規範 | 任何任務完成後 |
-| `/arch` | 系統架構、模組職責、Port 對照速查 | 問到架構/Port 時 |
-| `/app-check` | Android APP 修改的視障者可用性檢查 | Flutter/Android 修改時 |
-| `/web-test` | Website（Django + React）修改後測試清單 | Website 相關修改時 |
+- Python 套件管理統一使用 `uv`（`uv add` / `uv run`）
+- 任何套件安裝必須在 `.venv` 虛擬環境或 Docker 容器內執行，禁止污染全域環境
 
-## 專案簡介
+## 敏感資訊
 
-AI 智慧眼鏡視障導航系統。FastAPI 伺服器 + ESP32 穿戴裝置 + WebSocket 通訊。
-**正式啟動：`uv run python start_multi_device.py`**（同時啟 4 個 instance，port 8081～8084）
-架構詳見 `/arch`，已知地雷詳見 `/check`。
-
-## `_交接資料/` 資料夾說明
-
-**用途：** 存放所有含敏感資訊、不放 GitHub 的設定檔。新機器或新人要跑起系統時，需從此資料夾手動取得並放置到對應位置。
-
-| 檔案 | 放置位置 | 說明 |
-|------|----------|------|
-| `.env` | 專案根目錄 | 所有 API Key、模型路徑、功能開關 |
-| `Website.env` | `Website/.env` | Django DB 密碼、JWT Secret Key、管理員密碼 |
-| `google_Speech_to_Text.json` | 專案根目錄 | Google ASR 服務帳號私鑰 |
-| `Google_Api_Key.json` | 專案根目錄 | Gemini TTS / Vertex AI 金鑰 |
-
-**重要：** 這些檔案**不在 Git 上**，git pull/push 不會改變它們。只有使用者手動更新時才會變動。
-
-## `voice_missing_log/` 說明
-
-**更新者：** 部署機上運行的 `audio_player.py`。當系統播報時找不到預錄 WAV，自動寫入 `voice_missing_log/YYYY-MM-DD.txt`，再由部署機 push 到 GitHub。
-
-**處理流程：** 對話開始時主動 git pull 拿到最新 log → 處理缺失語音 → 生成 WAV → 刪除 log → commit & push
-
-**兩件事都在對話開始時執行（不等使用者說 pull）：**
-1. 檢查 `_交接資料/` 有無修改（使用者可能在上次對話後換了金鑰）
-2. git pull → 檢查 `voice_missing_log/` 有無新 log → 有則立即處理
+- API Key、密碼、Token、模型路徑一律放 `.env`
+- 禁止在程式碼中硬編碼任何敏感資訊
+- 使用 `python-dotenv` 讀取
 
 ---
 
@@ -109,17 +65,20 @@ AI 智慧眼鏡視障導航系統。FastAPI 伺服器 + ESP32 穿戴裝置 + Web
 **每次思考前，先對目前專案有深度了解，並清楚使用者的真實需求。**
 
 思考前必須：
-- 讀取 `MD/現況快照.md` 確認目前狀態（半成品、已知問題、下一步）
+- 讀取專案的現況文件（如 CLAUDE.md、現況快照、交接資料）確認目前狀態
 - 確認使用者的需求背後的**真正目的**（Why），不只是表面請求（What）
 - 若不確定專案現況，先查再動手，不猜測
 
 完成任何任務後必須：
-- 更新 `MEMORY.md` 索引與對應 memory 檔案（新發現、決策理由、地雷）
-- 更新相關 `.md` 文件（`MD/idea.md` 等）記錄本次決策
+- 更新記憶索引與對應 memory 檔案（新發現、決策理由、地雷）
+- 更新相關 `.md` 文件記錄本次決策
 - 若新增或修改了 Skill，同步更新 `CLAUDE.md` 的 Skills 表格
-- 執行 `/update-md` 確認交接資料已同步
 
 **目標：下次接觸此專案時，不需要使用者重新解釋，即可立刻掌握現況並繼續工作。**
+
+**對話開始時必做（每個專案依自身規則執行）：**
+- 檢查不在 Git 上的機密設定檔有無變更（如 `.env`、金鑰 JSON）
+- 執行 git pull 取得最新遠端狀態，處理任何累積的待辦 log
 
 ### 5. 目標導向執行
 
@@ -137,8 +96,6 @@ AI 智慧眼鏡視障導航系統。FastAPI 伺服器 + ESP32 穿戴裝置 + Web
 3. [步驟] → 驗證：[確認方式]
 ```
 
-明確的成功條件讓你能獨立循環執行；模糊的條件（「讓它跑起來」）則需要不斷確認。
-
 ### 6. 每次更新後必須徹底檢查，直到無錯誤才算完成
 
 **任何修改、新增、刪除動作完成後，必須自行執行完整檢查與測試，確認無任何錯誤，才能進入下一個環節。**
@@ -146,7 +103,7 @@ AI 智慧眼鏡視障導航系統。FastAPI 伺服器 + ESP32 穿戴裝置 + Web
 - 不能只說「應該沒問題」或「邏輯上正確」就結束
 - 若測試發現錯誤，**立即修正**，再重新測試，循環直到全部通過
 - 每個環節驗證通過後才能繼續下一步，不可跳過
-- 無法自動測試的項目（如 Flutter 實機、硬體），必須明確告知使用者「需要你手動驗證以下項目」，並列出清單
+- 無法自動測試的項目（如實機、硬體），必須明確告知使用者「需要你手動驗證以下項目」，並列出清單
 
 **驗證方式依情境選擇：**
 | 情境 | 驗證方式 |
@@ -161,48 +118,83 @@ AI 智慧眼鏡視障導航系統。FastAPI 伺服器 + ESP32 穿戴裝置 + Web
 **MD 修改強制核對清單（修改任何規則/MD 後必須逐項執行，不可跳過）：**
 
 **A. 跨檔一致性**
-- [ ] CLAUDE.md Skills 表格中每一個 skill → 在自動觸發表或準則中有對應的觸發時機
-- [ ] 自動觸發表中每一個 skill 呼叫 → 在 Skills 表格中有列出
-- [ ] 規則導覽.md 的觸發流程 → 與 CLAUDE.md 自動觸發表內容一致（不矛盾）
-- [ ] 所有提到啟動指令的地方 → 一律是 `start_multi_device.py`，不出現單獨的 `app_main.py` 啟動說明
-- [ ] 準則編號（1～6）→ 在 CLAUDE.md 和規則導覽.md 中完全一致
+- [ ] Skills 表格中每一個 skill → 在觸發規則或準則中有對應的觸發時機
+- [ ] 觸發規則中每一個 skill 呼叫 → 在 Skills 表格中有列出
+- [ ] 準則編號 → 在所有引用它的文件中完全一致
 
 **B. 引用有效性**
-- [ ] 所有 `memory/xxx.md` 路徑 → 確認對應檔案實際存在於 memory/ 目錄
-- [ ] 所有 `MD/xxx.md` 路徑 → 確認對應檔案實際存在於 MD/ 目錄
-- [ ] MEMORY.md 行為規範的每個連結 → 對應 memory 檔案存在
+- [ ] 所有 `memory/xxx.md` 路徑 → 確認對應檔案實際存在
+- [ ] 所有 `MD/xxx.md` 路徑 → 確認對應檔案實際存在
+- [ ] MEMORY.md 的每個連結 → 對應 memory 檔案存在
 
 **C. 無矛盾**
 - [ ] 同一份檔案內沒有兩段敘述互相矛盾
-- [ ] 不同檔案之間沒有同一事實的不同說法（例如啟動指令、skill 功能描述）
+- [ ] 不同檔案之間沒有同一事實的不同說法
 
 **D. 完整性**
-- [ ] 新增的 skill/規則/MD → 已同步更新到所有引用它的地方（CLAUDE.md、規則導覽.md、MEMORY.md）
+- [ ] 新增的 skill/規則/MD → 已同步更新到所有引用它的地方
 - [ ] 刪除的 skill/規則/MD → 已從所有引用它的地方移除
 
 ---
 
-## 自動觸發規則（使用者口頭描述時，Agent 自行對應執行）
-
-> 使用者不會手動輸入 `/skill`，Agent 必須根據使用者的自然語言**自動偵測情境**並執行對應流程。
-
-| 使用者說的話（關鍵詞） | Agent 自動執行的流程 |
-|----------------------|-------------------|
-| 對話開始時（任何任務前） | ① 檢查 `_交接資料/` 修改時間，有更新立即告知 ② git pull → 執行 /handover（處理 voice_missing_log/） |
-| 幫我 push／推上去／送出 | ① 執行 /pre-commit 確認 ② git add → commit → push ③ 確認 log 正確 |
-| 刪掉 X／移除 X／刪除 X | ① 執行 /delete skill 四步驟確認（誰引用？有備份嗎？影響範圍？） ② 確認無誤才刪 |
-| 幫我改 X／修 X／修正 X | ① 讀 `MD/現況快照.md` ② 依情境查 `MD/規則導覽.md` ③ 修改 ④ 測試直到無誤（準則 6） ⑤ 更新現況快照 |
-| 啟動系統／跑起來 | 使用 `uv run python start_multi_device.py`（絕不用 app_main.py） |
-| 幫我測試／跑一下 | 依情境選擇驗證方式（見準則 6 表格），確認全部通過才回報 |
-| 看架構／Port 是什麼 | 讀 `/arch` skill 內容回答 |
-| Flutter／Android 相關 | ① 讀 `memory/feedback_flutter_real_device_test.md` ② 執行 /app-check 視障者可用性確認清單 ③ 提醒：build 通過 ≠ 驗證完成，需實機測試 |
-| TTS／語音 相關 | 自動讀 `memory/feedback_tts_validation.md` + `memory/feedback_voice_map_sync.md` |
-| YOLO／模型 相關 | 自動讀 `memory/project_yoloe_26n_seg_avoidance_only.md` + `memory/feedback_yoloe_embedding_faster.md` |
-| GCP／Google 服務 | 自動讀 `memory/feedback_gcp_priority.md`（試用金優先） |
-| Colab／雲端任務 | 自動讀 `memory/feedback_resource_constrained_design.md`（三問） |
-| Website／Django／React 相關 | 自動執行 /web-test skill 確認清單，依清單逐項測試 |
-| 對話結束／沒事了 | ① 更新 `MD/現況快照.md` ② 執行 /update-md ③ 更新 MEMORY.md（若有新發現） ④ 告知使用者下一步 |
+> **準則生效的跡象：** diff 中不必要的改動減少、因過度設計而重寫的情況減少、釐清問題的提問發生在實作前而非出錯後。測試循環讓錯誤在交付前被消滅，而非由使用者發現。
 
 ---
 
-> **準則生效的跡象：** diff 中不必要的改動減少、因過度設計而重寫的情況減少、釐清問題的提問發生在實作前而非出錯後。測試循環讓錯誤在交付前被消滅，而非由使用者發現。
+<!-- RTK-RULES-START -->
+## RTK (Rust Token Killer) 使用規則
+
+**安裝位置**：`D:\RTK\bin\rtk.exe`（v0.39.0，**未加入系統 PATH**，獨立本地安裝，未污染全域環境）
+
+**核心目的**：壓縮 git/test/build/docker 等命令輸出，節省 60-90% LLM token
+
+### 呼叫格式
+
+PowerShell 必須用絕對路徑：
+
+```powershell
+& "D:\RTK\bin\rtk.exe" <subcommand> <args>
+```
+
+### 何時必須使用 rtk
+
+當預期輸出 **超過約 50 行**，且屬於下列類型時，**改用 rtk 包裝命令**：
+
+| 原始命令 | 改用 |
+|---------|------|
+| `git status` / `git diff` / `git log` / `git show` | `& "D:\RTK\bin\rtk.exe" git <sub>` |
+| `git add` / `git commit` / `git push` / `git pull` | `& "D:\RTK\bin\rtk.exe" git <sub>` |
+| `gh pr view` / `gh run list` / `gh issue list` | `& "D:\RTK\bin\rtk.exe" gh <sub>` |
+| `jest` / `vitest` / `playwright test` | `& "D:\RTK\bin\rtk.exe" <runner>` |
+| `pytest` / `cargo test` / `go test` | `& "D:\RTK\bin\rtk.exe" <runner>` |
+| `tsc` / `eslint` / `prettier --check` | `& "D:\RTK\bin\rtk.exe" tsc` / `lint` / `prettier` |
+| `cargo build` / `cargo clippy` / `next build` | `& "D:\RTK\bin\rtk.exe" cargo <sub>` / `next build` |
+| `docker ps` / `docker logs` / `kubectl get` | `& "D:\RTK\bin\rtk.exe" docker <sub>` / `kubectl <sub>` |
+| `curl <url>` 大型 JSON | `& "D:\RTK\bin\rtk.exe" curl <url>` |
+| 觀察大型 log 檔 | `& "D:\RTK\bin\rtk.exe" log <file>` |
+
+### 何時**不要**用 rtk
+
+1. **內建工具更好**：檔案讀寫搜尋一律優先用 Claude Code 內建 `Read` / `Grep` / `Glob` / `Edit`，**不要**用 `rtk ls` / `rtk grep` / `rtk find` / `rtk read` / `rtk tree`（這些在 Windows 原生會失敗，因為它們 proxy 到 Unix 命令）。
+2. **預期輸出 ≤ 20 行**：rtk 收益不大，維持原命令。
+3. **使用者明確要求看完整原始輸出**：維持原命令。
+4. **使用者明確說「不要用 rtk」或「直接用原命令」**：立即停止使用，並記住該專案的偏好。
+5. **互動式命令**（`git rebase -i` 等）：rtk 不支援互動。
+
+### 命令鏈中的處理
+
+PowerShell 沒有 `&&`，每段都要獨立包：
+
+```powershell
+# 錯誤
+git add . && git commit -m "msg"
+
+# 正確
+& "D:\RTK\bin\rtk.exe" git add . ; if ($?) { & "D:\RTK\bin\rtk.exe" git commit -m "msg" }
+```
+
+### 卸載
+
+`Remove-Item -Recurse -Force D:\RTK`（從未動 PATH 或其他全域設定，刪除即完整移除；同時移除本區塊規則）。
+<!-- RTK-RULES-END -->
+
