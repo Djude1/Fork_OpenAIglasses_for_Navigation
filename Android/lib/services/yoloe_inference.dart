@@ -6,7 +6,7 @@
 //       area_ratio + bottom_y_ratio，交給 painter 依「近紅遠黃、只描邊」畫。
 //       不做室內/室外區分（以後若要再加，另開切換）。
 //
-// 模型：yoloe-26l-seg.onnx（seg 模型，output0=[1,4+nc+32,8400]，output1 mask proto）
+// 模型：yoloe-26s-seg.onnx（seg 模型，output0=[1,4+nc+32,8400]，output1 mask proto）
 //       偵測模式：只讀 output0，output1 完全忽略（省略 proto flatten ~150ms）。
 //
 // 流程：CameraImage(YUV420) → 主 isolate copy plane bytes
@@ -20,29 +20,30 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui' show Rect;
+import 'dart:ffi' as ffi;
+import 'dart:math' as math;
+import 'dart:ui' show Offset, Rect;
 
 import 'package:camera/camera.dart';
+import 'package:ffi/ffi.dart' show calloc;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:image/image.dart' as img;
 import 'package:onnxruntime_v2/onnxruntime_v2.dart';
+// ignore: implementation_imports
+import 'package:onnxruntime_v2/src/bindings/onnxruntime_bindings_generated.dart'
+    as bg;
 
 import '../screens/yoloe_ar_test_screen.dart' show Detection, InferResult;
 
-// 與伺服器 obstacle_detector_client.WHITELIST_CLASSES 保持同步
+// 對應 outdoor_labels.json compact 26 標籤（export_yoloe26l_seg_compact.py 產生的模型）
 const Set<String> _kObstacleWhitelist = {
-  'person', 'bicycle', 'car', 'motorcycle', 'bus', 'truck',
-  'animal', 'scooter', 'stroller', 'dog',
-  'pole', 'post', 'bollard', 'utility pole', 'light pole', 'signpost',
-  'bench', 'chair', 'potted plant', 'hydrant', 'cone', 'stone', 'box',
-  'trash can', 'barrel', 'cart',
-  'fence', 'barrier', 'wall', 'gate', 'door',
-  'rock', 'tree', 'branch', 'curb',
-  'stairs', 'step', 'ramp', 'hole',
-  'bag', 'suitcase', 'backpack',
-  'table', 'ladder',
-  'object', 'obstacle',
+  'person', 'bicycle', 'car', 'motorcycle', 'bus', 'truck', 'scooter', 'dog',
+  'pole', 'bollard', 'cone', 'hydrant', 'signpost',
+  'bench', 'chair', 'box', 'trash can', 'cart',
+  'fence', 'wall', 'door',
+  'stairs', 'curb', 'ramp',
+  'tree', 'barrier',
 };
 
 class YoloeInference {
@@ -66,15 +67,16 @@ class YoloeInference {
 
   Future<void> init() async {
     OrtEnv.instance.init();
-    const modelAsset = 'assets/models/yoloe_26l_seg_outdoor.onnx';
+    const modelAsset = 'assets/models/yoloe_26s_seg_outdoor.onnx';
     const labelAsset = 'assets/models/outdoor_labels.json';
 
     final modelBytes =
         (await rootBundle.load(modelAsset)).buffer.asUint8List();
     _session?.release();
     final opts = OrtSessionOptions()
-      ..setIntraOpNumThreads(4)    // SD855 有 8 核心，4 執行緒推論；XNNPACK 會繼承此設定
-      ..appendXnnpackProvider();   // XNNPACK：Google 優化 FP32 conv，ARM NEON 加速
+      ..setIntraOpNumThreads(4)
+      ..appendNnapiProvider(NnapiFlags.useFp16)  // Adreno 640 GPU；FP16 加速；不支援的 op 自動回退 CPU
+      ..appendXnnpackProvider();                  // XNNPACK CPU fallback
     _session = OrtSession.fromBuffer(modelBytes, opts);
     opts.release();
     final names = _session!.inputNames;
@@ -134,23 +136,28 @@ class YoloeInference {
         return InferResult(detections: const [], srcW: srcW, srcH: srcH);
       }
 
-      // 只讀 output0；output1（mask proto）完全略過，省約 150ms flatten
-      final raw0 = rawOutputs[0]?.value;
-      for (final o in rawOutputs) {
-        o?.release();
-      }
-      if (raw0 is! List) {
-        debugPrint('[YoloeInference] output0.value 非 List，型別=${raw0.runtimeType}');
+      // GetTensorMutableData → asTypedList → setRange：一次 memcpy 取代 element-by-element 複製
+      // output0 shape (1, 4+nc+32, 8400)；output1 shape (1, 32, 160, 160) mask proto
+      final n0 = (4 + _labels.length + _numMaskCoef) * 8400;
+      const n1 = 32 * 160 * 160;
+      if (rawOutputs[0] == null) {
+        for (final o in rawOutputs) { o?.release(); }
         return InferResult(detections: const [], srcW: srcW, srcH: srcH);
       }
+      final flat0 = _ortToFloat32(rawOutputs[0]!, n0);
+      final flat1 = (rawOutputs.length > 1 && rawOutputs[1] != null)
+          ? _ortToFloat32(rawOutputs[1]!, n1)
+          : null;
+      for (final o in rawOutputs) { o?.release(); }
 
-      final flat0 = _flatten3D(raw0);
       final nc = _labels.length;
-      // output0 shape: (4+nc+_numMaskCoef, 8400)；含 mask coef 欄但不解碼
       final numAnchors = flat0.length ~/ (4 + nc + _numMaskCoef);
 
       final decoded = await compute(_decodeIsolate, _DecodeReq(
         output0: flat0,
+        proto1: flat1,
+        maskW: 160,
+        maskH: 160,
         nc: nc,
         numAnchors: numAnchors,
         scale: pre.scale,
@@ -193,21 +200,6 @@ class YoloeInference {
     }
   }
 
-  // 攤平 (1, A, B) → Float32List length A*B（row-major）
-  static Float32List _flatten3D(List raw) {
-    final outer = raw[0] as List;
-    final a = outer.length;
-    final b = (outer[0] as List).length;
-    final out = Float32List(a * b);
-    for (int i = 0; i < a; i++) {
-      final row = (outer[i] as List).cast<num>();
-      final base = i * b;
-      for (int j = 0; j < b; j++) {
-        out[base + j] = row[j].toDouble();
-      }
-    }
-    return out;
-  }
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -295,7 +287,7 @@ _PreRes _preprocessIsolate(_PreReq req) {
     bytes: rgb.buffer,
     order: img.ChannelOrder.rgb,
   );
-  final rotated = img.copyRotate(src, angle: -90);
+  final rotated = img.copyRotate(src, angle: 90);
   final rW = rotated.width;
   final rH = rotated.height;
 
@@ -330,6 +322,8 @@ _PreRes _preprocessIsolate(_PreReq req) {
 
 class _DecodeReq {
   final Float32List output0;     // (4+nc+32) × numAnchors，row-major
+  final Float32List? proto1;     // (32 × maskH × maskW)，mask prototype
+  final int maskW, maskH;
   final int nc;
   final int numAnchors;
   final double scale;
@@ -339,6 +333,9 @@ class _DecodeReq {
   final List<String> labels;
   const _DecodeReq({
     required this.output0,
+    this.proto1,
+    required this.maskW,
+    required this.maskH,
     required this.nc,
     required this.numAnchors,
     required this.scale,
@@ -452,10 +449,23 @@ _DecodeResult _decodeIsolate(_DecodeReq req) {
     final label = req.labels[ids[i]];
     if (!_kObstacleWhitelist.contains(label)) { dbgWl++; continue; }
 
+    List<Offset>? poly;
+    final proto = req.proto1;
+    if (proto != null) {
+      final coefBase = (4 + req.nc) * req.numAnchors;
+      final coefs = Float32List(32);
+      for (int k = 0; k < 32; k++) {
+        coefs[k] = req.output0[(coefBase + k) * req.numAnchors + i];
+      }
+      poly = _maskPolygon(coefs, proto, req.maskW, req.maskH,
+          boxes[i], req.scale, req.padX, req.padY);
+    }
+
     dets.add(Detection(
       label: label,
       confidence: scores[i],
       box: Rect.fromLTWH(bx1, by1, bx2 - bx1, by2 - by1),
+      polygon: poly,
       areaRatio: areaRatio,
       bottomYRatio: bottomYRatio,
     ));
@@ -465,6 +475,56 @@ _DecodeResult _decodeIsolate(_DecodeReq req) {
       dbgConfPass: boxes.length, dbgNmsKeep: keep.length,
       dbgBox: dbgBox, dbgArea: dbgArea, dbgWl: dbgWl,
       dbgTop3: top3str);
+}
+
+/// OrtValue → Float32List（直接取 GetTensorMutableData 原生指標 → setRange memcpy）
+/// 取代 OrtValueTensor.value 的 element-by-element 複製，對 520K/819K floats 省 ~80-130ms
+Float32List _ortToFloat32(OrtValue v, int n) {
+  final pp = calloc<ffi.Pointer<ffi.Float>>();
+  OrtEnv.instance.ortApiPtr.ref.GetTensorMutableData
+      .asFunction<bg.OrtStatusPtr Function(
+          ffi.Pointer<bg.OrtValue>, ffi.Pointer<ffi.Pointer<ffi.Void>>)>()(
+      v.ptr, pp.cast());
+  final out = Float32List(n);
+  out.setRange(0, n, pp.value.asTypedList(n));
+  calloc.free(pp);
+  return out;
+}
+
+
+/// mask prototype + 32 係數 → 物件輪廓 polygon（portrait 座標）
+/// 掃描線法：每隔 2 行取左右邊界，組成封閉輪廓
+List<Offset>? _maskPolygon(
+  Float32List coefs, Float32List proto, int mW, int mH,
+  List<double> box, double scale, int padX, int padY,
+) {
+  final mx1 = (box[0] / 4).clamp(0.0, (mW - 1).toDouble()).toInt();
+  final my1 = (box[1] / 4).clamp(0.0, (mH - 1).toDouble()).toInt();
+  final mx2 = (box[2] / 4).clamp(0.0, (mW - 1).toDouble()).toInt();
+  final my2 = (box[3] / 4).clamp(0.0, (mH - 1).toDouble()).toInt();
+  if (mx2 <= mx1 || my2 <= my1) return null;
+
+  final size  = mW * mH;
+  final left  = <Offset>[];
+  final right = <Offset>[];
+
+  for (int my = my1; my <= my2; my += 2) {
+    int lx = -1, rx = -1;
+    for (int mx = mx1; mx <= mx2; mx++) {
+      double val = 0.0;
+      final idx = my * mW + mx;
+      for (int k = 0; k < 32; k++) { val += coefs[k] * proto[k * size + idx]; }
+      if (1.0 / (1.0 + math.exp(-val)) > 0.5) {
+        if (lx < 0) lx = mx;
+        rx = mx;
+      }
+    }
+    if (lx < 0) continue;
+    left.add(Offset((lx * 4 - padX) / scale, (my * 4 - padY) / scale));
+    right.add(Offset((rx * 4 - padX) / scale, (my * 4 - padY) / scale));
+  }
+  if (left.length < 2) return null;
+  return [...left, ...right.reversed];
 }
 
 List<int> _isoNms(
