@@ -27,6 +27,7 @@ class AiGlassesApp extends StatelessWidget {
       ],
       child: MaterialApp(
         title: 'AI智慧眼鏡',
+        navigatorKey: AppProvider.navigatorKey,
         debugShowCheckedModeBanner: false,
         theme: AppTheme.dark,
         initialRoute: '/splash',

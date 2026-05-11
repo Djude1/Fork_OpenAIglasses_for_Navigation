@@ -16,7 +16,6 @@ import '../providers/app_provider.dart';
 import '../widgets/debug_panel.dart';
 import 'contacts_screen.dart';
 import 'emergency_select_screen.dart';
-import 'emergency_countdown_screen.dart';
 
 class BlindScreen extends StatefulWidget {
   const BlindScreen({super.key});
@@ -35,7 +34,6 @@ class _BlindScreenState extends State<BlindScreen>
   String _prevNavState    = '';
   int    _prevMsgCount    = 0;
   bool?  _prevConnected;
-  int    _prevImpactVersion = 0;   // 上一次消化的撞擊版本號，避免重複彈出
   String _prevAsrState    = 'standby';  // ASR 收音狀態追蹤
 
   // DEBUG 懸浮球（僅開發人員模式顯示）
@@ -122,85 +120,7 @@ class _BlindScreenState extends State<BlindScreen>
       setState(() {});
     }
 
-    // ── 消化待辦撞擊事件（前台直接觸發 / 背景返回後補觸發）───────────────
-    // 以版本號比對取代力道值比對，確保相同力道的撞擊也能重複觸發
-    final impact        = app.pendingImpactMagnitude;
-    final impactVersion = app.impactVersion;
-    if (impact > 0 && impactVersion != _prevImpactVersion) {
-      _prevImpactVersion = impactVersion;
-      app.clearPendingImpact();
-      if (app.contacts.isNotEmpty) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => EmergencyCountdownScreen(
-              magnitude: impact,
-              onOutcome: (outcome) =>
-                  _handleImpactOutcome(impact, outcome),
-            ),
-          ),
-        );
-      }
-    }
-  }
-
-  // ── 撞擊倒數結束後：詢問是否誤判，再回報伺服器 ──────────────────────────
-  Future<void> _handleImpactOutcome(double magnitude, String outcome) async {
-    if (!mounted) return;
-    final app = context.read<AppProvider>();
-
-    // 等畫面回到 BlindScreen 後再彈出對話框
-    await Future.delayed(const Duration(milliseconds: 400));
-    if (!mounted) return;
-
-    final isFalse = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1A1A2E),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          '這次偵測是誤判嗎？',
-          style: TextStyle(
-              fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '撞擊力道：${magnitude.toStringAsFixed(1)} m/s²',
-              style: const TextStyle(fontSize: 14, color: Colors.white54),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              '您的回饋將幫助我們調整偵測靈敏度。',
-              style: TextStyle(fontSize: 14, color: Colors.white70),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('是，這是誤判',
-                style: TextStyle(color: Colors.orangeAccent, fontSize: 16)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1B5E20),
-            ),
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('不是，真的摔倒了',
-                style: TextStyle(color: Colors.white, fontSize: 16)),
-          ),
-        ],
-      ),
-    );
-
-    if (isFalse == null || !mounted) return;
-    // 回報伺服器（含誤判旗標）
-    app.reportImpactEvent(magnitude, outcome, isFalsePositive: isFalse);
-    app.speak(isFalse ? '已記錄為誤判，感謝回饋' : '已記錄，請注意安全');
+    // 撞擊偵測 UI 由 AppProvider 透過 navigatorKey 全域 push，BlindScreen 不參與
   }
 
   void _announce(String text) =>

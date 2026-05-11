@@ -22,8 +22,12 @@ import '../services/gps_navigation_service.dart';
 import '../services/emergency_notification_service.dart';
 import '../services/voice_cache_service.dart';
 import '../services/local_voice_service.dart';
+import '../screens/emergency_countdown_screen.dart';
 
 class AppProvider extends ChangeNotifier {
+  /// 全域 NavigatorKey — 讓 Provider 可在任何頁面 push 倒數畫面（摔倒偵測）
+  static final navigatorKey = GlobalKey<NavigatorState>();
+
   // ── 伺服器設定 ──────────────────────────────────────────────────────────
   String _host         = AppConstants.defaultHost;
   int    _port         = AppConstants.defaultPort;
@@ -307,7 +311,8 @@ class AppProvider extends ChangeNotifier {
 
   // ── 裝置感測器設定（固定預設值）──────────────────────────────────────────
   final double _impactThreshold = 30.0;   // m/s²，預設 3G
-  final int    _cooldownSeconds = 30;     // 冷卻秒數
+  // 冷卻 10 秒：擋同一次摔倒的重複觸發，但倒數結束後會立即 resetCooldown()
+  final int    _cooldownSeconds = 10;
 
   double get impactThreshold => _impactThreshold;
   int    get cooldownSeconds  => _cooldownSeconds;
@@ -334,46 +339,117 @@ class AppProvider extends ChangeNotifier {
   }
 
   // ── 背景撞擊偵測狀態 ─────────────────────────────────────────────────────
-  bool   _appInForeground       = true;
+  bool   _appInForeground        = true;
+  /// 背景偵測到的撞擊力道，等使用者點通知回到前台後補彈倒數畫面
   double _pendingImpactMagnitude = 0.0;
-  /// 每次新撞擊遞增，BlindScreen 以版本號比對，避免相同力道的撞擊被擋住
-  int    _impactVersion          = 0;
-
-  /// 待辦撞擊量（> 0 表示有未處理的撞擊，BlindScreen 回到前台後消化）
-  double get pendingImpactMagnitude => _pendingImpactMagnitude;
-  int    get impactVersion          => _impactVersion;
 
   /// App 前台/背景狀態切換（由 BlindScreen 的 WidgetsBindingObserver 呼叫）
   void handleLifecycleState(AppLifecycleState state) {
     _appInForeground = (state == AppLifecycleState.resumed);
     if (_appInForeground && _pendingImpactMagnitude > 0) {
-      // App 回到前台，取消通知並通知 BlindScreen 彈出倒數畫面
+      // App 回到前台：取消系統通知，補彈倒數畫面
       EmergencyNotificationService().cancelFallAlert();
-      notifyListeners();
+      final m = _pendingImpactMagnitude;
+      _pendingImpactMagnitude = 0.0;
+      _showImpactCountdown(m);
     }
   }
 
-  /// BlindScreen 消化撞擊後呼叫，清除待辦狀態
-  void clearPendingImpact() {
-    _pendingImpactMagnitude = 0.0;
-  }
-
-  /// IMU 撞擊回呼：在 Provider 層統一處理（前台 / 背景均有效）
+  /// IMU 撞擊回呼：Provider 層統一處理，任何頁面都會觸發
   void _onImpactDetected(double magnitude) {
+    debugPrint('[IMPACT-DEBUG] _onImpactDetected 收到事件 '
+        'magnitude=${magnitude.toStringAsFixed(1)} '
+        'contacts=${_contacts.length} '
+        'foreground=$_appInForeground');
     if (_contacts.isEmpty) {
       // 無緊急連絡人，僅記錄（no-op），不觸發倒數
+      debugPrint('[IMPACT-DEBUG] contacts 為空，直接 return，不彈倒數');
       reportImpactEvent(magnitude, 'no_contacts');
       return;
     }
-    _pendingImpactMagnitude = magnitude;
-    _impactVersion++;
     if (_appInForeground) {
-      // 前台：透過 notifyListeners 讓 BlindScreen 彈出倒數畫面
-      notifyListeners();
+      debugPrint('[IMPACT-DEBUG] 前台 → 透過 navigatorKey push 倒數畫面');
+      _showImpactCountdown(magnitude);
     } else {
-      // 背景：顯示全螢幕系統通知，喚醒使用者注意
+      // 背景：先存待辦量，發系統通知；回前台時 handleLifecycleState 會補彈
+      debugPrint('[IMPACT-DEBUG] 背景 → 顯示系統通知，等回前台補彈');
+      _pendingImpactMagnitude = magnitude;
       EmergencyNotificationService().showFallAlert(magnitude);
     }
+  }
+
+  /// 用全域 NavigatorKey push 倒數畫面，不受當前頁面是 Blind/Home/Settings 影響
+  void _showImpactCountdown(double magnitude) {
+    final nav = navigatorKey.currentState;
+    debugPrint('[IMPACT-DEBUG] _showImpactCountdown navigatorKey.currentState=${nav == null ? "NULL" : "OK"}');
+    if (nav == null) return;
+    nav.push(MaterialPageRoute(
+      builder: (_) => EmergencyCountdownScreen(
+        magnitude: magnitude,
+        onOutcome: (outcome) => _afterImpactCountdown(magnitude, outcome),
+      ),
+    ));
+    debugPrint('[IMPACT-DEBUG] 倒數畫面已 push');
+  }
+
+  /// 倒數結束後彈誤判詢問 dialog，再把結果回報伺服器
+  Future<void> _afterImpactCountdown(double magnitude, String outcome) async {
+    debugPrint('[IMPACT-DEBUG] _afterImpactCountdown outcome=$outcome');
+    // 倒數結束（取消或自動撥出）→ 立即重置冷卻，下次撞擊立刻可再觸發
+    _imu.resetCooldown();
+    // 等畫面回到原本所在頁面後再彈 dialog
+    await Future.delayed(const Duration(milliseconds: 400));
+    final ctx = navigatorKey.currentContext;
+    if (ctx == null) return;
+
+    final isFalse = await showDialog<bool>(
+      // ignore: use_build_context_synchronously
+      context: ctx,
+      barrierDismissible: false,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          '這次偵測是誤判嗎？',
+          style: TextStyle(
+              fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '撞擊力道：${magnitude.toStringAsFixed(1)} m/s²',
+              style: const TextStyle(fontSize: 14, color: Colors.white54),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              '您的回饋將幫助我們調整偵測靈敏度。',
+              style: TextStyle(fontSize: 14, color: Colors.white70),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: const Text('是，這是誤判',
+                style: TextStyle(color: Colors.orangeAccent, fontSize: 16)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1B5E20),
+            ),
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: const Text('不是，真的摔倒了',
+                style: TextStyle(color: Colors.white, fontSize: 16)),
+          ),
+        ],
+      ),
+    );
+
+    if (isFalse == null) return;
+    reportImpactEvent(magnitude, outcome, isFalsePositive: isFalse);
+    await speak(isFalse ? '已記錄為誤判，感謝回饋' : '已記錄，請注意安全');
   }
 
   // ── 回報撞擊事件（含使用者誤判回饋）────────────────────────────────────────
