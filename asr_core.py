@@ -590,6 +590,15 @@ class GoogleASR:
         """統一處理 Google STT 結果"""
         if self._mode == "standby":
             if not is_final:
+                # 旁路模式下：partial 也即時推給 UI，讓使用者看到自己被辨識中
+                # 非旁路（真喚醒詞模式）的 standby 仍維持靜默，避免閒談被當指令展示
+                if _bypass_wake or self._bypass_wake:
+                    event_partial = {"output": {"sentence": {
+                        "text": transcript, "sentence_end": False}}}
+                    try:
+                        self._callback.on_event(event_partial)
+                    except Exception:
+                        pass
                 return
             print(f"[GoogleASR] 待機辨識: '{transcript}'", flush=True)
             self._check_wake_word(transcript)

@@ -485,7 +485,6 @@ class AppProvider extends ChangeNotifier {
     _ws.connectImu();
 
     await _startCamera();
-    await _startMicrophone();
     _imu.start(onData: (d) => _ws.sendImu(d));
 
     // 重置伺服器導航狀態：僅在伺服器確實有導航在運行時才發送停止指令，避免廣播無謂的錯誤訊息
@@ -510,10 +509,23 @@ class AppProvider extends ChangeNotifier {
     // ignore: unawaited_futures
     _audio.playStreamWav(_host, _port, secure: _secure, baseUrl: _baseUrl);
     _connected = true;
+    _addMessage('[版本] APP 2026-05-13 ASR 修復版 — chip+filter+ping+寬鬆 nav');
+    _addMessage('[系統] 已連線 SERVER → ${_endpointLabel()}');
     notifyListeners();
 
     startPollingNavState();
     _startWatchdog();
+
+    // 麥克風立即啟動（使用者要求一進入 APP 就收音）
+    // 注意：splash 階段的歡迎 TTS 可能被錄到，使用者已知此限制
+    await _startMicrophone();
+  }
+
+  /// 構造目前 server 端點字串（baseUrl 優先，否則回 host:port）
+  String _endpointLabel() {
+    final base = _baseUrl.trim();
+    if (base.isNotEmpty) return base;
+    return '$_host:$_port';
   }
 
   // ── Watchdog：定期確認連線，斷線自動恢復 ─────────────────────────────────
@@ -551,6 +563,7 @@ class AppProvider extends ChangeNotifier {
       // ignore: unawaited_futures
       _audio.playStreamWav(_host, _port, secure: _secure, baseUrl: _baseUrl);
       _connected = true;
+      _addMessage('[系統] 重新連線 SERVER → ${_endpointLabel()}');
       notifyListeners();
       startPollingNavState();
     } catch (_) {
@@ -648,24 +661,50 @@ class AppProvider extends ChangeNotifier {
 
     // PARTIAL: 語音正在辨識中 → ASR 進入聆聽狀態
     // 旁路模式下伺服器不推 SPEAK:開始對話，需靠 PARTIAL 偵測
+    // [ 開頭的 partial 是 server 廣播 stream（[AI]/[系统]/[导航] 等）
+    //   → 不切 listening（否則 AI 回覆中 chip 會誤顯示「聆聽中」）
+    //   → 但若當前是 processing，把廣播文字顯示在 chip 上讓使用者看到 AI 正在回覆什麼
     if (msg.startsWith('PARTIAL:')) {
       final partialText = msg.substring(8).trim();
-      _asrPartialText = partialText;
-      if (partialText.isNotEmpty && partialText != '（已開始接收音訊…）') {
-        _updateAsrState('listening');
+      final isServerBroadcast = partialText.startsWith('[');
+      if (isServerBroadcast) {
+        // 去掉 [xxx] 前綴後顯示給使用者（例如「[AI] 抱歉...」→「抱歉...」）
+        final stripped = partialText.replaceFirst(RegExp(r'^\[[^\]]+\]\s*'), '');
+        if (_asrState == 'processing' && stripped.isNotEmpty) {
+          _asrPartialText = stripped;
+          notifyListeners();
+        }
+      } else {
+        _asrPartialText = partialText;
+        if (partialText.isNotEmpty && partialText != '（已開始接收音訊…）') {
+          _updateAsrState('listening');
+          _resetListeningTimeout();   // 每次新 partial 都重置 5 秒超時
+        }
       }
       notifyListeners();
     }
 
-    // FINAL: 語音辨識完成 → ASR 進入處理中狀態
+    // FINAL: server 端的 ui_broadcast_final 同時被「ASR 真實語音 final」和
+    // 「[系統]/[导航]/[AI]/[狀態]/[錯誤] 等廣播訊息」共用。
+    // 使用者真實語音 final 不會以 [ 開頭，凡是 [xxx] 開頭一律視為 server 廣播：
+    // 不切 ASR 狀態，但更新 chip 顯示文字（讓使用者看到 AI 完整回覆）。
     if (msg.startsWith('FINAL:')) {
       final finalText = msg.substring(6).trim();
-      if (finalText.isNotEmpty) {
-        _asrFinals.add(finalText);
-        if (_asrFinals.length > 30) _asrFinals.removeAt(0);
+      final isServerBroadcast = finalText.startsWith('[');
+      if (!isServerBroadcast) {
+        if (finalText.isNotEmpty) {
+          _asrFinals.add(finalText);
+          if (_asrFinals.length > 30) _asrFinals.removeAt(0);
+        }
+        _asrPartialText = '';
+        _updateAsrState('processing');
+      } else {
+        // [ 前綴廣播：去前綴後顯示完整 AI 回覆在 chip 上（processing 期間）
+        final stripped = finalText.replaceFirst(RegExp(r'^\[[^\]]+\]\s*'), '');
+        if (_asrState == 'processing' && stripped.isNotEmpty) {
+          _asrPartialText = stripped;
+        }
       }
-      _asrPartialText = '';
-      _updateAsrState('processing');
       notifyListeners();
     }
 
@@ -701,15 +740,33 @@ class AppProvider extends ChangeNotifier {
   }
 
   Timer? _asrProcessingTimer;
+  Timer? _asrListeningTimer;
+
+  /// 重置 listening 超時：每收到新 partial 就重新計時 5 秒，
+  /// 避免 server 沒推 final / SPEAK:結束收音 時 chip 永遠卡「聆聽中」
+  void _resetListeningTimeout() {
+    _asrListeningTimer?.cancel();
+    _asrListeningTimer = Timer(const Duration(seconds: 5), () {
+      if (_asrState == 'listening') {
+        _asrState = 'standby';
+        _asrPartialText = '';
+        debugPrint('[AppProvider] listening 5 秒無新 partial → 回 standby');
+        notifyListeners();
+      }
+    });
+  }
 
   void _updateAsrState(String newState) {
     if (_asrState != newState) {
       _asrState = newState;
       debugPrint('[AppProvider] ASR 狀態: $_asrState');
 
+      // 任何狀態切換都清空兩個 timer，下面只重設當前狀態需要的
+      _asrProcessingTimer?.cancel();
+      _asrListeningTimer?.cancel();
+
       // processing 狀態設定 15 秒超時，自動回到 standby
       // 避免 Omni 對話等不推送 NAV_STATE 的場景卡在 processing
-      _asrProcessingTimer?.cancel();
       if (newState == 'processing') {
         _asrProcessingTimer = Timer(const Duration(seconds: 15), () {
           if (_asrState == 'processing') {
@@ -992,6 +1049,7 @@ class AppProvider extends ChangeNotifier {
   @override
   void dispose() {
     _asrProcessingTimer?.cancel();
+    _asrListeningTimer?.cancel();
     stopAllServices();
     _tts.stop();
     _viewerController.close();

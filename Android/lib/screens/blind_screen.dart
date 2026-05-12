@@ -272,38 +272,8 @@ class _BlindScreenState extends State<BlindScreen>
               child: _PageDots(current: _currentPage, total: 2),
             ),
 
-            // ── ASR 聆聽中覆蓋層（視障者無障礙提示）──────────────────────
-            if (app.isListening)
-              Positioned(
-                top: 20,
-                right: 16,
-                child: Semantics(
-                  label: '正在聆聽您的語音指令',
-                  liveRegion: true,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.amber.shade800.withOpacity(0.85),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.mic, color: Colors.white, size: 20),
-                        SizedBox(width: 6),
-                        Text(
-                          '聆聽中',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+            // 右上「聆聽中」chip 已由全域 AsrStatusOverlay 統一處理，
+            // 此處只保留頂部 _StatusBar 的色條閃爍作為視障者邊緣觸覺/視覺提示
           ],
         ),
       ),

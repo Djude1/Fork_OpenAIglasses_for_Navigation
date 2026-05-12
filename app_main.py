@@ -729,18 +729,16 @@ async def start_ai_with_text_custom(user_text: str):
         return
 
     # 【修改】检查是否是导航相关命令 - 使用orchestrator控制
-    if (
-        "开始导航" in user_text
-        or "开启导航" in user_text
-        or "盲道导航" in user_text
-        or "帮我导航" in user_text
-        or "開始導航" in user_text
-        or "開啟導航" in user_text
-        or "幫我導航" in user_text
-        or "忙導航" in user_text
-        or "我要導航" in user_text
-        or "開導航" in user_text
-    ):
+    # 寬鬆意圖判斷：「導航/避障」+ 沒停止字 = 啟動，容忍 ASR 誤辨
+    # （例如「將導航/強導航/開啟地嚮導航/Ktv藏導航」這類辨識偏差）
+    _has_nav_obj = (
+        "導航" in user_text or "导航" in user_text or "避障" in user_text
+    )
+    _has_stop_intent = any(s in user_text for s in (
+        "停止", "結束", "结束", "關閉", "关闭", "關掉", "关掉", "不要", "停",
+    ))
+    if _has_nav_obj and not _has_stop_intent:
+        print(f"[NAV-LOOSE-MATCH] 寬鬆判斷命中『啟動』：'{user_text}'", flush=True)
         # 【新增】如果正在找物品，先停止
         if yolomedia_running:
             stop_yolomedia()
@@ -759,14 +757,9 @@ async def start_ai_with_text_custom(user_text: str):
             await ui_broadcast_final("[系统] 导航系统未就绪")
         return
 
-    if (
-        "停止导航" in user_text
-        or "结束导航" in user_text
-        or "停止導航" in user_text
-        or "結束導航" in user_text
-        or "不要導航" in user_text
-        or "停導航" in user_text
-    ):
+    # 寬鬆停止判斷：「導航/避障」+ 停止字 = 關閉，涵蓋所有「停止/結束/關閉/關掉/不要 + 導航/避障」組合
+    if _has_nav_obj and _has_stop_intent:
+        print(f"[NAV-LOOSE-MATCH] 寬鬆判斷命中『停止』：'{user_text}'", flush=True)
         if orchestrator:
             orchestrator.stop_navigation()
             print(f"[NAVIGATION] 导航已停止，状态: {orchestrator.get_state()}")
@@ -1420,7 +1413,15 @@ async def ws_audio(ws: WebSocket):
         return
     esp32_audio_ws = ws
     await ws.accept()
-    print("\n[AUDIO] client connected")
+    # 連線分隔符 + 時間戳 + 客戶端 IP：在 log 一眼區分多次連線/重連的時段
+    from datetime import datetime as _dt
+    _client_ip = ws.client.host if ws.client else "?"
+    _client_port = ws.client.port if ws.client else "?"
+    _ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"\n{'═' * 60}")
+    print(f"[CONNECT] {_ts}  ws_audio ← {_client_ip}:{_client_port}")
+    print(f"{'═' * 60}", flush=True)
+    print("[AUDIO] client connected")
     recognition = None
     streaming = False
     last_ts = time.monotonic()
@@ -1461,7 +1462,18 @@ async def ws_audio(ws: WebSocket):
             if WebSocketState and ws.client_state != WebSocketState.CONNECTED:
                 break
             try:
-                msg = await ws.receive()
+                # 15 秒沒收到任何 frame（含 keepalive）→ 視為 audio WS 半關閉，
+                # 主動斷連讓 APP 端 onDone 觸發重連。修復「第一次說話後 audio
+                # 無聲送上來」的問題 — sink.add 在 dart 端不 throw 但實際失敗，
+                # APP 端的 onError/onDone 都不會觸發，唯一突破是 server 主動斷。
+                # 麥克風 callback 每 100ms 一次，正常情況 frame 永遠不會停 15 秒
+                msg = await asyncio.wait_for(ws.receive(), timeout=15.0)
+            except asyncio.TimeoutError:
+                print(
+                    "[AUDIO] 15 秒無新音訊 frame → 主動斷線觸發 APP 重連",
+                    flush=True,
+                )
+                break
             except WebSocketDisconnect:
                 break
             except RuntimeError as e:
@@ -2226,6 +2238,18 @@ class UDPProto(asyncio.DatagramProtocol):
 
 
 # === UDP 廣播：讓 App 自動發現伺服器 IP ===
+@app.on_event("startup")
+async def on_startup_version_banner():
+    """印版本標記，讓使用者一眼確認 server 跑的是新版改動"""
+    print("\n" + "=" * 64, flush=True)
+    print("[VERSION] 2026-05-13 ASR 修復版", flush=True)
+    print("  - 寬鬆 nav 判斷（含『導航/避障』且無停止字 → 啟動）", flush=True)
+    print("  - TTS WaveNet 優先，Gemini 為後備", flush=True)
+    print("  - audio WS 15s frame timeout → 主動斷連觸發 APP 重連", flush=True)
+    print("  - ws_audio 連線分隔符（含時間戳 + IP）", flush=True)
+    print("=" * 64 + "\n", flush=True)
+
+
 @app.on_event("startup")
 async def on_startup_udp_broadcast():
     """每 2 秒廣播伺服器資訊到區網，App 監聽 port 47777 後自動連線"""
