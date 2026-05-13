@@ -662,15 +662,17 @@ class AppProvider extends ChangeNotifier {
     // PARTIAL: 語音正在辨識中 → ASR 進入聆聽狀態
     // 旁路模式下伺服器不推 SPEAK:開始對話，需靠 PARTIAL 偵測
     // [ 開頭的 partial 是 server 廣播 stream（[AI]/[系统]/[导航] 等）
-    //   → 不切 listening（否則 AI 回覆中 chip 會誤顯示「聆聽中」）
-    //   → 但若當前是 processing，把廣播文字顯示在 chip 上讓使用者看到 AI 正在回覆什麼
+    //   [AI] → 強制切 processing 並顯示 AI 回覆（不論先前狀態為何，重設 15s timer）
+    //   其他廣播 → 不切狀態，僅在 processing 期間更新 chip 文字
     if (msg.startsWith('PARTIAL:')) {
       final partialText = msg.substring(8).trim();
       final isServerBroadcast = partialText.startsWith('[');
       if (isServerBroadcast) {
-        // 去掉 [xxx] 前綴後顯示給使用者（例如「[AI] 抱歉...」→「抱歉...」）
         final stripped = partialText.replaceFirst(RegExp(r'^\[[^\]]+\]\s*'), '');
-        if (_asrState == 'processing' && stripped.isNotEmpty) {
+        if (partialText.startsWith('[AI]') && stripped.isNotEmpty) {
+          _asrPartialText = stripped;
+          _updateAsrState('processing');   // 強切 processing，重設 15s timer
+        } else if (_asrState == 'processing' && stripped.isNotEmpty) {
           _asrPartialText = stripped;
           notifyListeners();
         }
@@ -686,8 +688,8 @@ class AppProvider extends ChangeNotifier {
 
     // FINAL: server 端的 ui_broadcast_final 同時被「ASR 真實語音 final」和
     // 「[系統]/[导航]/[AI]/[狀態]/[錯誤] 等廣播訊息」共用。
-    // 使用者真實語音 final 不會以 [ 開頭，凡是 [xxx] 開頭一律視為 server 廣播：
-    // 不切 ASR 狀態，但更新 chip 顯示文字（讓使用者看到 AI 完整回覆）。
+    // 使用者真實語音 final 不會以 [ 開頭；[AI] 前綴強切 processing；
+    // 其他 [xxx] 不切狀態僅更新 chip。
     if (msg.startsWith('FINAL:')) {
       final finalText = msg.substring(6).trim();
       final isServerBroadcast = finalText.startsWith('[');
@@ -699,9 +701,11 @@ class AppProvider extends ChangeNotifier {
         _asrPartialText = '';
         _updateAsrState('processing');
       } else {
-        // [ 前綴廣播：去前綴後顯示完整 AI 回覆在 chip 上（processing 期間）
         final stripped = finalText.replaceFirst(RegExp(r'^\[[^\]]+\]\s*'), '');
-        if (_asrState == 'processing' && stripped.isNotEmpty) {
+        if (finalText.startsWith('[AI]') && stripped.isNotEmpty) {
+          _asrPartialText = stripped;
+          _updateAsrState('processing');   // 強切 processing，重設 15s timer
+        } else if (_asrState == 'processing' && stripped.isNotEmpty) {
           _asrPartialText = stripped;
         }
       }
