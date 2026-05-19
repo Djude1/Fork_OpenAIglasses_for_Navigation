@@ -34,50 +34,74 @@
 
 拆除 = 刪 2 個新檔 + 還原 `app.dart` 路由那行 + 移除 settings 入口按鈕。
 
-## 4. 寫死資料結構
+## 4. 寫死資料結構（時段排程表）
+
+> 真實資料證實號誌為**多時段變週期**（一天約 12 段、週期 75~150 秒、平日／六／日不同），單一固定週期無法準確推算。資料結構改為「每路口一張時段時制排程表」。完整實測數據見 `2026-05-20-traffic-light-data-台北商大.md`。
 
 ```dart
 enum LightColor { green, red }
+enum DayType { weekday, sat, sun }   // 一~五 / 六 / 日
+
+// 一個時段時制：自 startMinOfDay 起生效，直到下一筆
+class SignalPlan {
+  final int startMinOfDay;  // 生效起始（當日分鐘數，如 14:00 → 840）
+  final int greenSec;       // 該時段沿播報方向的綠燈秒數（取自時相秒數）
+  final int redSec;         // 該時段紅燈秒數（= 週期 − greenSec）
+  final int anchorEpochSec; // 此時段現場實測錨點：看到剛轉綠的 Unix 秒（待現場填）
+  const SignalPlan({...});
+}
 
 class TrafficLightSpot {
-  final String name;        // 路口名稱（播報用）
+  final String deviceId;    // 官方設備編號（資料溯源用，如 'SJGIK10'）
+  final String name;
   final double lat;
   final double lng;
   final int triggerRadiusM; // 觸發半徑（公尺），預設 30
-  final int greenSec;       // 綠燈秒數（待實測）
-  final int redSec;         // 紅燈秒數（待實測，黃燈併綠尾）
-  final int anchorEpochSec; // 錨點 Unix 秒：該時刻為 anchorColor 的「起點」
-  final LightColor anchorColor; // 錨點當下開始的顏色
-  final String note;        // 此週期對應哪個方向行人穿越
+  final String note;        // 播報對應哪個方向行人穿越
+  final Map<DayType, List<SignalPlan>> schedule; // 依日型的時段排程
   const TrafficLightSpot({...});
 }
 
+// 已抓到真實週期值，anchorEpochSec 待現場實測
 const trafficLightSpots = <TrafficLightSpot>[
   TrafficLightSpot(
-    name: '台北商業大學正門（濟南路口）',
-    lat: 25.0413, lng: 121.5365,   // 占位，待實測
+    deviceId: 'SJGIK10',
+    name: '台北商業大學正門（濟南路一段×杭州南一段）',
+    lat: 25.041555, lng: 121.526155,
     triggerRadiusM: 30,
-    greenSec: 0, redSec: 0,        // 占位，待實測
-    anchorEpochSec: 0,             // 占位：「實測時看到剛轉綠」的 Unix 秒
-    anchorColor: LightColor.green,
-    note: '沿濟南路東西向行人穿越',
+    note: '沿濟南路東西向行人穿越；時相一/時相二之和＝週期',
+    schedule: {
+      DayType.weekday: [
+        // startMin, green(時相一), red(時相二)  — 真實值，anchor 待測
+        SignalPlan(startMinOfDay: 0,    greenSec: 80, redSec: 40, anchorEpochSec: 0), // 00:00 週期120
+        SignalPlan(startMinOfDay: 60,   greenSec: 62, redSec: 28, anchorEpochSec: 0), // 01:00 週期90
+        SignalPlan(startMinOfDay: 300,  greenSec: 80, redSec: 40, anchorEpochSec: 0), // 05:00 週期120
+        SignalPlan(startMinOfDay: 420,  greenSec: 90, redSec: 60, anchorEpochSec: 0), // 07:00 週期150
+        SignalPlan(startMinOfDay: 540,  greenSec: 85, redSec: 65, anchorEpochSec: 0), // 09:00 週期150
+        SignalPlan(startMinOfDay: 840,  greenSec: 85, redSec: 65, anchorEpochSec: 0), // 14:00 週期150
+        SignalPlan(startMinOfDay: 990,  greenSec: 85, redSec: 65, anchorEpochSec: 0), // 16:30 週期150
+        SignalPlan(startMinOfDay: 1140, greenSec: 95, redSec: 55, anchorEpochSec: 0), // 19:00 週期150
+        SignalPlan(startMinOfDay: 1380, greenSec: 80, redSec: 40, anchorEpochSec: 0), // 23:00 週期120
+      ],
+      // sat/sun 待補；先做平日驗證
+    },
   ),
-  // 先放 1~3 個占位，做最常走的方向
+  // 其餘 SJJIA10/SJPIM10/SJSIC10 座標與數據已備齊，視驗證結果再加
 ];
 ```
 
 ### 相位推算（純函式）
 
 ```
-cycle   = greenSec + redSec
-elapsed = ((now - anchorEpochSec) % cycle + cycle) % cycle   // 處理跨週期與負時間差
-若 anchorColor == green:
-    elapsed < greenSec → color=green, remain = greenSec - elapsed
-    否則               → color=red,   remain = cycle - elapsed
-若 anchorColor == red：對稱推算
+1. 依現在日型(weekday/sat/sun)取 schedule，找出 startMinOfDay <= 現在時刻 的最後一筆 plan
+2. cycle = plan.greenSec + plan.redSec
+3. plan.anchorEpochSec == 0 → 回傳「此時段尚未現場校準」狀態，不播誤導語音
+4. elapsed = ((now - anchorEpochSec) % cycle + cycle) % cycle
+   elapsed < greenSec → color=green, remain = greenSec - elapsed
+   否則              → color=red,   remain = cycle - elapsed
 ```
 
-`cycle <= 0`（占位未填）時回傳特殊「資料未填」狀態，畫面顯示「此路口尚無實測資料」，不播誤導語音。
+任何 plan 的 `anchorEpochSec` 未填（=0）時畫面顯示「此路口此時段尚無實測校準」，**僅在已校準時段才播報**。
 
 ## 5. 觸發與播報邏輯
 
@@ -94,7 +118,8 @@ elapsed = ((now - anchorEpochSec) % cycle + cycle) % cycle   // 處理跨週期�
 ## 6. 測試
 
 ### 自動（Flutter 單元測試）
-- 相位推算邊界：剛好等於錨點、跨多個週期、負時間差、綠/紅交界那一秒、`cycle<=0` 未填資料。
+- 時段選取：依日型（平日/六/日）與當下時刻，取 `startMinOfDay <= now` 的最後一筆 plan；跨午夜回繞到前一日最後時段。
+- 相位推算邊界：剛好等於錨點、跨多個週期、負時間差、綠/紅交界那一秒、`anchorEpochSec==0` 回「未校準」狀態（不播報）。
 - 最近路口選擇：多 spot 假座標下取最近且在半徑內；皆超出半徑時回傳 null。
 
 ### 需使用者實機手動驗證（明確清單）
@@ -108,11 +133,13 @@ elapsed = ((now - anchorEpochSec) % cycle + cycle) % cycle   // 處理跨週期�
 
 - 不做黃燈精算：綠/紅兩相，黃燈併入綠燈尾段。
 - 不做多方向相位：每個 spot 先針對使用者最常走的單一方向。
-- 不做後端整合、不串接 data.taipei 開放號誌時制資料（格式過重；列為未來可選）。
+- 週期/時相秒數**離線取自 data.taipei**「臺北市路口號誌時制計畫」，蒸餾成寫死表（見 `2026-05-20-traffic-light-data-台北商大.md`）；**不做即時 API 串接**（格式過重、且無即時相位，列為未來可選）。
 - 不做全域背景自動觸發（方案 B）；待資料驗證可靠後，再評估把觸發點從畫面搬到全域。
 
 ## 8. 已知限制（臨時測試功能）
 
-- 固定週期推算僅適用**定時號誌**；感應式/可變週期路口會不準。
-- 長時間後系統時鐘與號誌實際相位可能漂移，需重新校錨點。
-- 占位座標/週期未填前，功能僅顯示「尚無實測資料」，不播誤導語音。
+- **公開資料只給週期與時相秒數，不給即時相位**：data.taipei 官方資料無「此刻燈走到第幾秒」的基準，且多數路口有連鎖時差（offset）、尖峰時段甚至為感應式（如 SJSIC10）。純靠系統時間＋公開資料**本質上無法精準推回目前紅綠**——這正是高德地圖紅綠燈倒數備受爭議的根因。
+- 因此每個路口、每個時段時制，仍須**現場實測一次錨點**（填入 `anchorEpochSec`）才會播報；未校準時段只顯示不播報。
+- 號誌時制會被交通局調整：本資料為 2024-03-01 版（取得時已逾一年），需定期重新核對與重測錨點。
+- 長時間後系統時鐘與號誌實際相位仍可能漂移。
+- 結論：本功能定位為**可行性測試**，準確性以「已現場校準的單一路口單一時段」為限，不宜對視障使用者宣稱可全天候信賴。
