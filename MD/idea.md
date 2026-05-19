@@ -423,3 +423,26 @@ APP 使用者反映「語音方面效果沒有很好」「語音轉文字收音�
 - `app_main.py`：debug API 新增欄位
 - `Android/lib/providers/app_provider.dart`：ASR 文字追蹤 + INIT 解析
 - `Android/lib/widgets/debug_panel.dart`：分頁 UI + ASR Dashboard
+
+---
+
+## 新增 AGENTS.md 階層文件（2026-05-19）
+
+### 重點決策
+- 執行 `/oh-my-claudecode:deepinit`，但**不採預設「每個目錄都產生」**（全專案 125 個目錄，與本專案「簡潔優先」準則衝突且大量重複 README）
+- 改採「模組邊界」策略：只在真正的架構接縫產生 7 份 AGENTS.md
+- 內容為實查程式結構後撰寫（非樣板），並導向既有 `README.md` / `MD/` / `arch`、`web-test`、`app-check` 等 skill，避免重複既有文件
+- 每份內嵌本專案規則（uv、繁中註釋、`.env` 機密、RTK、對應測試方式）供 AI agent 快速定位
+
+### 產生的檔案（含 parent 階層）
+- `AGENTS.md`（根，無 parent）：Python 後端 + 子系統索引
+- `MD/AGENTS.md` → 根：文件中心導覽
+- `Android/AGENTS.md` → 根：Flutter App 總覽
+- `Android/lib/AGENTS.md` → `Android/AGENTS.md`：Dart 原始碼分層
+- `Website/AGENTS.md` → 根：展示網站總覽
+- `Website/backend/AGENTS.md` → `Website/AGENTS.md`：Django 6 app
+- `Website/frontend/AGENTS.md` → `Website/AGENTS.md`：React + 管理後台
+
+### 維護注意
+- 重新跑 deepinit 時，各檔 `<!-- MANUAL: -->` 線以下的手動註記會保留
+- 若新增大型子模組，依同一「模組邊界」原則決定是否補 AGENTS.md，不要退回逐目錄產生
