@@ -287,17 +287,15 @@ if (_shouldPlayStream && state == PlayerState.completed) {
 
 部署機測試前必做決策：
 
-### 1. 部署機要不要 `git pull` 拉到 `origin/main`？
-- **拉了之後會有**：15s timeout、寬鬆 nav、WaveNet TTS、viewer 重連修復
-- **拉了之後仍存在**：本表 Bug 1/2 沒修、Bug 3 自承未解、Bug 4 沒 push 到部署機
-- **不拉**：APP（已 ec3f2d0）與 server（停 017c7f5）不對等更嚴重
-- **建議**：拉。並監看是否有新問題
+### 1. 部署機 `git pull`（必做）
+- 拉到 `origin/main` 會有：`0a51a93` server 修復（15s timeout / 寬鬆 nav / WaveNet TTS）、`1c86d9e` viewer 重連、`ec3f2d0` APP audio watchdog、本交接文件
+- **拉了之後仍存在**：本表 Bug 1 / Bug 2 沒修、Bug 3 自承未解、Bug 4 watchdog 只解 recorder 層
+- 拉之前先 `git fetch --tags` 確認 rollback tag 在（見下方「復原指令」段）
 
-### 2. `ec3f2d0` 要不要 push 到 origin？
-- 包含 `ec3f2d0` 後部署機才拿得到 audio watchdog（Bug 4 部分緩解）
-- 但 `ec3f2d0` 自身未經實機驗證
-- **若部署機 = 測試環境**：推薦 push
-- **若部署機 = 生產環境**：建議先在本地 adb reverse 驗證後再 push
+### 2. `ec3f2d0` push 狀態：✅ 已完成（2026-05-20）
+- `ec3f2d0` + 本交接文件已 push 到 `origin/main`
+- 復原 baseline tag `rollback-baseline-20260511` 已建並 push（指向 5/11 的 `017c7f5`）
+- 部署機 `git pull` 即可拿到完整新版；測試失敗用下方「復原指令」段一鍵回退
 
 ### 3. 測試清單
 見 memory `project_asr_repair_session_20260513.md` 的「使用者實機驗證清單」（3 步：開啟避障導航 → 停止導航 → 現在幾點）。
