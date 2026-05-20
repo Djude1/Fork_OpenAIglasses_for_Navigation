@@ -14,6 +14,7 @@ import 'screens/settings_screen.dart';
 import 'screens/read_screen.dart';
 import 'screens/nav_destination_screen.dart';
 import 'screens/yoloe_ar_test_screen.dart';
+import 'screens/traffic_light_test_screen.dart';
 import 'screens/customer_service_screen.dart';
 import 'widgets/asr_status_overlay.dart';
 
@@ -44,6 +45,7 @@ class AiGlassesApp extends StatelessWidget {
           '/read':        (_) => const ReadScreen(),
           '/nav_dest':    (_) => const NavDestinationScreen(),
           '/yoloe_ar_test': (_) => const YoloeArTestScreen(),
+          '/traffic_light_test': (_) => const TrafficLightTestScreen(),
           '/support':       (_) => const CustomerServiceScreen(),
         },
       ),

@@ -371,6 +371,20 @@ class _MainPage extends StatelessWidget {
           ),
         ),
 
+        // ── 紅綠燈時刻表測試（開發者工具，臨時功能）──────────────────
+        // 對應計畫：docs/superpowers/plans/2026-05-20-traffic-light-schedule-test.md
+        Expanded(
+          flex: 14,
+          child: _NavBlock(
+            label:    '紅綠燈時刻表測試',
+            sublabel: '開發者工具 · 台北商大路口 GPS 推算',
+            icon:     Icons.traffic_rounded,
+            color:    const Color(0xFF263238),
+            isActive: false,
+            onTap:    () => Navigator.pushNamed(context, '/traffic_light_test'),
+          ),
+        ),
+
         // ── 過馬路 ───────────────────────────────────────────────────
         Expanded(
           flex: 14,
