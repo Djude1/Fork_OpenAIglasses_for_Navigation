@@ -53,6 +53,7 @@ class _TrafficLightTestScreenState extends State<TrafficLightTestScreen> {
   }
 
   void _onPosition(Position pos) {
+    if (!mounted) return;
     final spot = nearestSpot(pos.latitude, pos.longitude);
     if (spot == null) {
       if (_currentDeviceId != null) {
