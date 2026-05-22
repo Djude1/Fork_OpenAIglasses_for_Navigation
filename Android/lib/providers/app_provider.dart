@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import '../core/constants.dart';
@@ -27,6 +28,9 @@ import '../screens/emergency_countdown_screen.dart';
 class AppProvider extends ChangeNotifier {
   /// 全域 NavigatorKey — 讓 Provider 可在任何頁面 push 倒數畫面（摔倒偵測）
   static final navigatorKey = GlobalKey<NavigatorState>();
+
+  /// 與原生（Kotlin）溝通的 MethodChannel — 接收音量鍵手動喚醒事件
+  static const _appControlChannel = MethodChannel('com.aiglasses/app_control');
 
   // ── 伺服器設定 ──────────────────────────────────────────────────────────
   String _host         = AppConstants.defaultHost;
@@ -124,6 +128,23 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ── 音量鍵手動喚醒 ────────────────────────────────────────────────────────
+  /// 處理原生（Kotlin）端透過 MethodChannel 送來的呼叫
+  Future<dynamic> _handleNativeMethodCall(MethodCall call) async {
+    if (call.method == 'onManualWake') {
+      _onManualWake();
+    }
+    return null;
+  }
+
+  /// 音量鍵組合（音量＋與音量－同時按）觸發：送 WAKE 給伺服器，等同說「哈囉」。
+  /// 伺服器在喚醒詞模式下會進入主動聆聽並播「開始對話」；旁路模式下為無害 no-op。
+  void _onManualWake() {
+    if (!_connected) return;
+    _ws.sendAudioWake();
+    _addMessage('[系統] 音量鍵手動喚醒');
+  }
+
   Future<void> setPositionMode(String mode) async {
     if (mode != 'clock' && mode != 'cardinal') return;
     _positionMode = mode;
@@ -204,6 +225,9 @@ class AppProvider extends ChangeNotifier {
     // 背景預載固定語音快取（不阻塞啟動流程）
     VoiceCacheService.instance.init(_tts);
     LocalVoiceService.instance.init(); // 載入 assets/voice_map.json
+
+    // 接收原生端（Kotlin）的音量鍵手動喚醒事件
+    _appControlChannel.setMethodCallHandler(_handleNativeMethodCall);
 
     await loadContacts();
     await loadPlaces();

@@ -446,3 +446,38 @@ APP 使用者反映「語音方面效果沒有很好」「語音轉文字收音�
 ### 維護注意
 - 重新跑 deepinit 時，各檔 `<!-- MANUAL: -->` 線以下的手動註記會保留
 - 若新增大型子模組，依同一「模組邊界」原則決定是否補 AGENTS.md，不要退回逐目錄產生
+
+---
+
+## 喚醒詞改「哈囉」＋移除結束詞＋音量鍵手動喚醒（已實作，2026-05-22）
+
+### 重點決策
+- **喚醒詞「哈囉曼波」→「哈囉」**：使用者指示專題展示優先，「好呼叫」比抗誤觸發重要。已知並接受「哈囉」是日常高頻詞、誤觸發率高。
+- **結束詞「謝謝曼波」整個移除**：不再偵測結束詞，結束對話純靠主動模式靜音（`SILENCE_SEC` 2.5s）/ 超時（`ACTIVE_MAX_SEC` 12s）自動結束。
+- **喚醒比對**：新增 `asr_core.is_wake_word()`，繁/簡/英變體「包含即命中」，最大化觸發率。
+- **APP 音量鍵手動喚醒**：APP 前景時同時按「音量＋」與「音量－」→ 送 `WAKE` 給 server → 等同說「哈囉」（進主動聆聽 + 播「開始對話」）。單按音量鍵維持正常調音量。
+- **硬體強制喚醒詞**：架構本已正確 — ESP32 / 本機模式走非 bypass（送 `START`），APP 用切換鈕（已存在）控制；任務 2 無需改碼。
+- Android 一般 App 無法攔截關機鍵 → 原「音量＋關機」需求改為純音量雙鍵組合。
+
+### 涉及檔案
+- `asr_core.py`：新增 `is_wake_word()`；`WAKE_WORDS` 改哈囉繁/簡/英變體；移除 `END_WORDS`、`_MAMBO_VARIANTS`、`_handle_active` 結束詞偵測、`ASRCallback.on_end_word`/`on_end_fn`；`speech_contexts` 改哈囉
+- `app_main.py`：`/ws_audio` 新增 `WAKE` 指令分支（手動喚醒）；移除 2 處 `on_end_fn`
+- `Android/.../MainActivity.kt`：`dispatchKeyEvent` 攔截音量雙鍵 → MethodChannel `onManualWake`
+- `Android/lib/services/websocket_service.dart`：新增 `sendAudioWake()`
+- `Android/lib/providers/app_provider.dart`：MethodChannel 收 `onManualWake` → `sendAudioWake()`
+- 測試：新增 `test_wake_keyword.py`（正規 assert）；更新 `test_voice_commands.py`、`test_asr_agc.py`、`test_traditional_chinese_user.py`
+
+### 專案清理（隨本次刪除）
+| 檔案 | 原因 |
+|------|------|
+| `test_mambo_keyword.py` | 整檔為舊「曼波」喚醒/結束詞測試，已被 `test_wake_keyword.py` 取代 |
+| `test_comprehensive_stress.py` | 整檔建立在舊「曼波/結束詞」狀態機（FakeASR），設計已不存在 |
+
+### 驗證
+- pytest 16 passed；`flutter analyze`（改動 Dart 檔）0 新問題；`py_compile` app_main + asr_core OK
+- 待實機驗證：Kotlin 編譯（部署機無 Android SDK，須在 build 機驗證）、實機喚醒/音量鍵/自動結束
+
+### 注意事項（地雷）
+- 「哈囉」誤觸發率高，是專題展示取捨下的刻意決定，非疏失。
+- 音量鍵手動喚醒**僅 APP 前景**有效（螢幕關閉/背景收不到按鍵事件，Android 限制）。
+- 驗證任務 5 時發現既有隱患（未動）：`workflow_blindpath.py:888-954` YOLO 失敗會靜默改用假的盲道遮罩，只 log warning — 模型掛掉時系統不會報錯而是用假資料導航。

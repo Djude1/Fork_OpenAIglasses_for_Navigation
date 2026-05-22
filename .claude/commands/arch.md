@@ -76,6 +76,13 @@ Layer 3：/stream.wav HTTP 串流（伺服器端 Gemini TTS / WaveNet 合成）
 
 **重點**：APP 端優先走本地語音，盡量不依賴網路 TTS 延遲。
 
+## 語音喚醒（輸入）
+
+- 喚醒詞「**哈囉**」：`asr_core.is_wake_word()`，繁/簡/英變體「包含即命中」；**無結束詞**，結束對話靠靜音自動結束
+- 待機/主動雙模式：說「哈囉」→ 主動聆聽 → 靜音 `SILENCE_SEC`(2.5s) / 超時 `ACTIVE_MAX_SEC`(12s) 自動結束
+- APP 旁路模式（`START:BYPASS`）：麥克風全程收音免喚醒詞，由 APP 喚醒詞切換鈕控制；硬體（ESP32/本機）走 `START` 強制喚醒詞
+- APP 音量雙鍵手動喚醒：前景時同時按「音量＋／音量－」→ 送 `WAKE` 至 `/ws_audio` → 等同說「哈囉」
+
 ## TTS 地雷
 
 - Gemini TTS ≤4 字短句/問句 → 400

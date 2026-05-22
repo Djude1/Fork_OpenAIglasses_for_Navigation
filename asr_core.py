@@ -229,21 +229,29 @@ INTERRUPT_KEYWORDS = set(
     os.getenv("INTERRUPT_KEYWORDS", "停下所有功能,停止所有功能").split(",")
 )
 
-# ── 喚醒詞 / 結束詞設定 ──────────────────────────────────────────────────────
-WAKE_WORDS = set(os.getenv("WAKE_WORDS", (
-    # 標準喚醒詞
-    "哈囉 曼波,哈囉曼波,哈囉，曼波,哈喽曼波,哈喽漫播,哈喽 曼波,哈喽，曼波,"
-    # ASR 誤辨常見變體（含「羅曼波」可涵蓋「阿羅曼波」「沙羅曼波」）
-    "羅曼波,哈囉慢播,哈囉嗎,"
-    # 快語速 / 口音 / 誤辨變體
-    "哈曼波,哈羅曼波,哈洛曼波,哈漏曼波,"
-    "哈囉慢波,哈囉漫波,哈囉滿波,哈囉們波"
-)).split(","))
-END_WORDS  = set(os.getenv("END_WORDS",  (
-    "謝謝 曼波,謝謝曼波,謝謝，曼波,谢谢曼波,谢谢漫播,谢谢 曼波,"
-    # ASR 誤辨變體：曼→漫/慢/滿，播→波
-    "謝謝漫波,謝謝慢播,謝謝慢波,謝謝滿波,謝謝漫播"
-)).split(","))
+# ── 喚醒詞設定 ──────────────────────────────────────────────────────
+_WAKE_WORDS_DEFAULT = (
+    # 繁體諧音
+    "哈囉,哈嘍,哈羅,哈摟,哈漏,哈樓,哈咯,哈囖,蛤囉,蝦囉,"
+    # 簡體
+    "哈啰,哈喽,哈罗,哈搂,哈楼,"
+    # 英文（ASR 將「哈囉」辨識成英文時）
+    "hello,hallo,halo,hullo"
+)
+WAKE_WORDS = set(
+    w.strip().lower()
+    for w in os.getenv("WAKE_WORDS", _WAKE_WORDS_DEFAULT).split(",")
+    if w.strip()
+)
+
+
+def is_wake_word(text: str) -> bool:
+    """判斷辨識文字是否含喚醒詞「哈囉」（繁 / 簡 / 英變體，包含即命中）。"""
+    if not text:
+        return False
+    norm = _normalize_cn(text)   # 簡→繁 + 小寫
+    raw  = text.lower()          # 保留簡體原樣，涵蓋簡繁轉換表未收錄的字
+    return any(w in norm or w in raw for w in WAKE_WORDS)
 
 # ── ASR 全局總閘 ─────────────────────────────────────────────────────────────
 
@@ -299,7 +307,6 @@ class ASRCallback:
         full_system_reset_fn,
         interrupt_lock: asyncio.Lock,
         on_wake_fn:           Optional[Callable] = None,
-        on_end_fn:            Optional[Callable] = None,
         on_recording_end_fn:  Optional[Callable] = None,
     ):
         self._on_sdk_error = on_sdk_error
@@ -314,7 +321,6 @@ class ASRCallback:
         self._ai_dispatched:   bool = False           # 是否已派發 AI 處理（用於避免重複播 結束收音）
         self._rec_end_played:  bool = False           # 結束收音音效是否已提前播放
         self._on_wake          = on_wake_fn           # 喚醒詞觸發（播放「開始對話」）
-        self._on_end           = on_end_fn            # 結束詞「謝謝曼波」觸發（播放「結束對話」）
         self._on_recording_end = on_recording_end_fn  # 主動錄音自然結束（播放「結束收音」）
 
     def on_open(self):  pass
@@ -326,14 +332,6 @@ class ASRCallback:
         if self._on_wake:
             try:
                 self._on_wake()
-            except Exception:
-                pass
-
-    def on_end_word(self):
-        """結束詞「謝謝曼波」觸發：播放結束對話音效"""
-        if self._on_end:
-            try:
-                self._on_end()
             except Exception:
                 pass
 
@@ -471,7 +469,7 @@ class GoogleASR:
     介面：start() / stop() / send_audio_frame()
 
     運作模式：
-    - 待機模式（standby）：持續串流，偵測喚醒詞「哈囉曼波」
+    - 待機模式（standby）：持續串流，偵測喚醒詞「哈囉」
     - 主動模式（active）：收到喚醒詞後啟動，靜音超過 SILENCE_SEC 即結束並派發指令
     """
 
@@ -481,9 +479,6 @@ class GoogleASR:
     STREAM_RESTART_SEC: float = 200.0  # Google 串流 5 分鐘上限，提前重啟
     # 說話人驗證用的近期音訊緩衝（滑動視窗保留最近 N 秒音訊）
     _RECENT_BUF_SEC:    float = 5.0    # 保留最近 5 秒供聲紋比對
-
-    # 曼波關鍵字變體：偵測到「曼波」（含 ASR 誤辨）即觸發喚醒
-    _MAMBO_VARIANTS = ("曼波", "漫波", "漫播", "慢播", "慢波", "滿波", "們波")
 
     def __init__(self, credentials_path: str, sample_rate: int, callback: "ASRCallback",
                  bypass_wake: bool = False):
@@ -622,9 +617,8 @@ class GoogleASR:
             self._callback.on_event(event)
             return
 
-        norm = _normalize_cn(text)
-        # 只要偵測到「曼波」（含 ASR 誤辨變體）即觸發喚醒
-        matched = any(v in norm for v in self._MAMBO_VARIANTS)
+        # 偵測到「哈囉」（含繁 / 簡 / 英變體）即觸發喚醒
+        matched = is_wake_word(text)
 
         if not matched:
             print(f"[GoogleASR] 待機中收到: '{text}'（無喚醒詞，忽略）", flush=True)
@@ -644,15 +638,7 @@ class GoogleASR:
         self.enter_active_mode()
 
     def _handle_active(self, text: str, is_final: bool):
-        norm = _normalize_cn(text)
-        # 結束詞偵測
-        if is_final:
-            for w in END_WORDS:
-                if w and _normalize_cn(w) in norm:
-                    print(f"[GoogleASR] 結束詞偵測: '{text}'", flush=True)
-                    self._mode = "standby"
-                    self._callback.on_end_word()
-                    return
+        # 結束對話改由主動模式靜音 / 超時自動結束（_handle_result），不再偵測結束詞
         event = {"output": {"sentence": {"text": text, "sentence_end": is_final}}}
         self._callback.on_event(event)
 
@@ -667,15 +653,10 @@ class GoogleASR:
             language_code="cmn-Hant-TW",
             alternative_language_codes=["zh-CN"],
             enable_automatic_punctuation=True,
-            # 熱詞：提高「曼波」相關詞的辨識權重
+            # 熱詞：提高喚醒詞「哈囉」相關變體的辨識權重
             speech_contexts=[_speech.SpeechContext(
-                phrases=["哈囉曼波", "哈囉 曼波", "謝謝曼波", "謝謝 曼波",
-                         "羅曼波", "哈囉慢播", "哈囉嗎",
-                         "曼波", "漫波", "漫播", "慢播",
-                         # 新增：常見 ASR 誤辨變體
-                         "慢波", "滿波", "們波",
-                         "哈羅曼波", "哈洛曼波",
-                         "哈囉慢波", "哈囉漫波", "哈囉滿波"],
+                phrases=["哈囉", "哈嘍", "哈羅", "哈摟", "哈漏",
+                         "蛤囉", "hello"],
                 boost=20.0,
             )],
         )

@@ -108,6 +108,11 @@ class WebSocketService {
     try { _audioWs?.sink.add(pcm16); } catch (_) {}
   }
 
+  /// 送出手動喚醒指令（APP 音量鍵組合觸發，等同說喚醒詞「哈囉」）
+  void sendAudioWake() {
+    try { _audioWs?.sink.add('WAKE'); } catch (_) {}
+  }
+
   void disconnectAudio() {
     _audioWsActive = false;
     _audioWsSub?.cancel();

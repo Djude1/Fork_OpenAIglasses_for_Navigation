@@ -1146,7 +1146,7 @@ async def api_set_param(name: str, value: float):
 
 @app.post("/api/bypass_wake")
 async def bypass_wake(enabled: bool):
-    """開啟 / 關閉旁路模式：跳過喚醒詞「哈囉曼波」，所有 STT 結果直接送給 AI 處理。
+    """開啟 / 關閉旁路模式：跳過喚醒詞「哈囉」，所有 STT 結果直接送給 AI 處理。
     開啟後終端機會顯示每次 STT 辨識結果（[ASR-旁路] STT → '...'）。"""
     import asr_core
 
@@ -1508,8 +1508,6 @@ async def ws_audio(ws: WebSocket):
                         interrupt_lock=interrupt_lock,
                         # 喚醒詞「哈囉」→ 播放開始對話音效 + 推送 SPEAK 給 APP
                         on_wake_fn=lambda: _play_and_speak("開始對話"),
-                        # 結束詞「謝謝 曼波」→ 播放結束收音音效 + 推送 SPEAK 給 APP
-                        on_end_fn=lambda: _play_and_speak("結束收音"),
                         # 主動錄音自然結束 → 播放結束收音音效 + 推送 SPEAK 給 APP
                         on_recording_end_fn=lambda: _play_and_speak("結束收音"),
                     )
@@ -1530,6 +1528,20 @@ async def ws_audio(ws: WebSocket):
 
                 elif cmd == "STOP":
                     await stop_rec(send_notice="OK:STOPPED")
+
+                elif cmd == "WAKE":
+                    # 手動喚醒（APP 音量鍵組合觸發）：等同說喚醒詞「哈囉」
+                    if recognition is not None and not _audio_bypass_mode:
+                        recognition.enter_active_mode()
+                        _play_and_speak("開始對話")
+                        print("[AUDIO] WAKE received — 手動喚醒，進入主動聆聽", flush=True)
+                    else:
+                        # 旁路模式：麥克風本就全程收音，手動喚醒為無害 no-op
+                        print("[AUDIO] WAKE received — 旁路模式，忽略（麥克風已全開）", flush=True)
+                    try:
+                        await ws.send_text("OK:WAKE")
+                    except Exception:
+                        pass
 
                 elif raw.startswith("PROMPT:"):
                     # 设备端主动发起一轮：同样使用"先硬重置后播放"的强语义
@@ -2545,7 +2557,6 @@ async def _local_mode_init():
             full_system_reset_fn=full_system_reset,
             interrupt_lock=interrupt_lock,
             on_wake_fn=lambda: _play_and_speak("開始對話"),
-            on_end_fn=lambda: _play_and_speak("結束收音"),
             on_recording_end_fn=lambda: _play_and_speak("結束收音"),
         )
 
