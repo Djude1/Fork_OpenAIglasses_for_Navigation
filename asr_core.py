@@ -488,6 +488,8 @@ class GoogleASR:
 
     SILENCE_SEC:        float = 2.5    # 主動模式靜音判斷秒數（延長避免截斷指令）
     SILENCE_RMS_THRESH: float = 80.0  # RMS 低於此值視為靜音（降低以提升收音靈敏度）
+    GRACE_PERIOD_SEC:   float = 6.5    # 進入 active 後 grace 期：盲人需要聽完「開始對話」chime
+                                       # + 反應 + 開講，此段時間內 silence 不算結束（含 chime 播放）
     ACTIVE_MAX_SEC:     float = 12.0   # 主動模式最長錄音時間（partial 可重置 _active_start）
     ACTIVE_ABSOLUTE_MAX_SEC: float = 25.0  # active 進入後絕對上限（partial 不能重置），
                                             # 防止 echo / 雜訊持續 partial 造成 infinite active
@@ -509,6 +511,10 @@ class GoogleASR:
         self._active_enter_ts  = 0.0   # 絕對 enter active 時間（partial 不重置）
         self._last_partial_text = ""   # active 期間最近一個非空 partial；active 結束且
                                        # Google 尚未送 final 時，視為 final 派發（修 Bug 1）
+        self._first_voice_received = False  # 本輪 active 是否已收到 Google STT partial（真實人聲），
+                                            # 配合 GRACE_PERIOD_SEC：未收到 partial 前 silence 不算結束。
+                                            # 故意不用 RMS 判斷：chime 回灌會讓 RMS 短暫 > 門檻，誤觸 grace 結束
+        self._cycle_count = 0          # 一次收音 = 一次 active 進出；用於 DEBUG log 標明本輪邊界
         self._stream_thread: Optional[threading.Thread] = None
 
         # 近期音訊滑動緩衝（用於說話人驗證）
@@ -547,6 +553,9 @@ class GoogleASR:
         self._active_enter_ts = now   # 絕對上限基準，partial 不重置
         self._last_voice_ts   = now
         self._last_partial_text = ""  # 重置上輪 active 殘留，避免錯派發
+        self._first_voice_received = False  # 重置 grace 旗標：本輪等使用者第一個聲音
+        self._cycle_count += 1
+        print(f"[ASR-CYCLE] ========== 收音 #{self._cycle_count} 開始（grace={self.GRACE_PERIOD_SEC}s）==========", flush=True)
         self._mode = "active"
         # 通知 audio_player 進入 ASR 主動模式 → 暫停導航 TTS + 清空已排隊 PCM
         try:
@@ -587,6 +596,10 @@ class GoogleASR:
         if self._mode == "active":
             if _calc_rms(data) > self.SILENCE_RMS_THRESH:
                 self._last_voice_ts = time.monotonic()
+                # 注意：此處只 update silence 計時，不 set _first_voice_received。
+                # 原因：chime「開始對話」播放回灌進 mic 會讓 RMS 短暫 > 門檻 → 誤觸 grace 結束 →
+                # 盲人還沒講話就被靜音超時收掉。改在 _handle_active 收 Google STT partial 才算
+                # 「真實人聲」（chime 不會被辨識成文字）。
             # 即使沒 ASR partial 也要檢查超時，否則純背景雜訊會讓 active 永不退出
             self._check_active_timeout()
 
@@ -666,6 +679,12 @@ class GoogleASR:
         # 絕對上限：partial 重置 _active_start 防止短話被截斷，但若 echo / 雜訊
         # 持續送 partial，active 會無限延長，所以加一個 partial 不能重置的絕對上限
         absolute_elapsed = now - self._active_enter_ts >= self.ACTIVE_ABSOLUTE_MAX_SEC
+        # Grace period：盲人需要聽完「開始對話」chime + 反應 + 開講。
+        # 還沒收到第一個聲音時，silence_elapsed 不算結束，至少撐到 GRACE_PERIOD_SEC。
+        in_grace = (not self._first_voice_received
+                    and now - self._active_enter_ts < self.GRACE_PERIOD_SEC)
+        if silence_elapsed and in_grace:
+            return False
         if not (silence_elapsed or timeout_elapsed or absolute_elapsed):
             return False
         if self._mode != "active":
@@ -673,7 +692,7 @@ class GoogleASR:
         if absolute_elapsed:
             reason = "絕對上限"
         elif silence_elapsed:
-            reason = "靜音"
+            reason = "grace 期滿無聲" if not self._first_voice_received else "靜音"
         else:
             reason = "超時"
         print(f"[GoogleASR] 主動模式結束（{reason}）", flush=True)
@@ -700,6 +719,8 @@ class GoogleASR:
         # 強制重啟 Google STT 串流：清掉 Google 內部累積的 partial buffer，
         # 避免下次 active 把舊 partial 跟新講話混在一起（修 Bug 2）。
         self._restart_stream()
+        duration = now - self._active_enter_ts
+        print(f"[ASR-CYCLE] ========== 收音 #{self._cycle_count} 結束（reason={reason}, duration={duration:.1f}s, partial_dispatched={'yes' if pending else 'no'}）==========", flush=True)
         return True
 
     def _check_wake_word(self, text: str):
@@ -735,6 +756,9 @@ class GoogleASR:
         event = {"output": {"sentence": {"text": text, "sentence_end": is_final}}}
         self._callback.on_event(event)
         stripped = text.strip()
+        if stripped:
+            # 收到 STT 內容（不論 partial/final）→ 確定有聲音，grace 期結束
+            self._first_voice_received = True
         if is_final:
             # Google 自然送出 final → 清空 partial 暫存，避免 _check_active_timeout 重複派發
             self._last_partial_text = ""
