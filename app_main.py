@@ -603,6 +603,8 @@ async def start_ai_with_text_custom(user_text: str):
                 "盲道导航",
                 "停止导航",
                 "结束导航",
+                "关闭导航",
+                "关掉导航",
                 "检测红绿灯",
                 "看红绿灯",
                 "停止检测",
@@ -613,6 +615,8 @@ async def start_ai_with_text_custom(user_text: str):
                 "開啟導航",
                 "停止導航",
                 "結束導航",
+                "關閉導航",
+                "關掉導航",
                 "檢測紅綠燈",
                 "看紅綠燈",
                 "停止檢測",
@@ -1531,13 +1535,19 @@ async def ws_audio(ws: WebSocket):
 
                 elif cmd == "WAKE":
                     # 手動喚醒（APP 音量鍵組合觸發）：等同說喚醒詞「哈囉」
-                    if recognition is not None and not _audio_bypass_mode:
+                    if recognition is None:
+                        # ASR 尚未啟動（沒收到 START）→ WAKE 無意義
+                        print("[AUDIO] WAKE received — ASR 未啟動，忽略", flush=True)
+                    elif _audio_bypass_mode:
+                        # 旁路模式：麥克風本就全程收音，手動喚醒為無害 no-op
+                        print("[AUDIO] WAKE received — 旁路模式，忽略（麥克風已全開）", flush=True)
+                    else:
+                        # 先停掉正在播的 TTS / 清空串流佇列，避免 APP 喇叭播 server 音訊回灌
+                        # 麥克風→ASR 干擾收音開頭（使用者體感「按下後等 2 秒才開始收音」的真兇）
+                        await hard_reset_audio("manual_wake")
                         recognition.enter_active_mode()
                         _play_and_speak("開始對話")
                         print("[AUDIO] WAKE received — 手動喚醒，進入主動聆聽", flush=True)
-                    else:
-                        # 旁路模式：麥克風本就全程收音，手動喚醒為無害 no-op
-                        print("[AUDIO] WAKE received — 旁路模式，忽略（麥克風已全開）", flush=True)
                     try:
                         await ws.send_text("OK:WAKE")
                     except Exception:

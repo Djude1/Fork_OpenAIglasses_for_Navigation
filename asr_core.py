@@ -8,7 +8,7 @@ ASR 核心模組：使用 Google Speech-to-Text 串流 API 進行即時語音辨
 - ASRCallback 處理熱詞觸發與 LLM 驅動流程
 """
 
-import os, json, asyncio, io, wave, struct, time, threading, queue, urllib.request, urllib.error
+import os, json, asyncio, io, wave, struct, time, threading, queue, re, urllib.request, urllib.error
 from typing import Any, Dict, List, Optional, Callable, Tuple
 
 ASR_DEBUG_RAW = os.getenv("ASR_DEBUG_RAW", "0") == "1"
@@ -246,12 +246,25 @@ WAKE_WORDS = set(
 
 
 def is_wake_word(text: str) -> bool:
-    """判斷辨識文字是否含喚醒詞「哈囉」（繁 / 簡 / 英變體，包含即命中）。"""
+    """判斷辨識文字是否含喚醒詞「哈囉」（繁 / 簡 / 英變體）。
+
+    中文喚醒詞：子字串匹配（「哈囉幫我看前面」也應觸發）。
+    英文喚醒詞：word-boundary 整詞匹配（避免 halogen / halo effect 中 halo 子字串誤命中）。
+    """
     if not text:
         return False
     norm = _normalize_cn(text)   # 簡→繁 + 小寫
     raw  = text.lower()          # 保留簡體原樣，涵蓋簡繁轉換表未收錄的字
-    return any(w in norm or w in raw for w in WAKE_WORDS)
+    for w in WAKE_WORDS:
+        if w.isascii():
+            # 英文：用 \b 整詞匹配，避免 halo 命中 halogen
+            if re.search(rf"\b{re.escape(w)}\b", raw):
+                return True
+        else:
+            # 中文：子字串匹配
+            if w in norm or w in raw:
+                return True
+    return False
 
 # ── ASR 全局總閘 ─────────────────────────────────────────────────────────────
 
@@ -521,10 +534,19 @@ class GoogleASR:
         print("[GoogleASR] stopped", flush=True)
 
     def enter_active_mode(self):
-        self._mode = "active"
+        # 先寫 timestamps、後 publish _mode：避免 _stream_loop 另一 thread 看到
+        # _mode=active 但讀到 _last_voice_ts 的舊值（0.0 或前一輪結束時間），
+        # 導致 _check_active_timeout 誤判已靜音 2.5 秒立刻結束 active。
         now = time.monotonic()
         self._active_start  = now
         self._last_voice_ts = now
+        self._mode = "active"
+        # 通知 audio_player 進入 ASR 主動模式 → 暫停導航 TTS，避免 echo 干擾
+        try:
+            from audio_player import set_asr_active_mode
+            set_asr_active_mode(True)
+        except Exception:
+            pass
         print("[GoogleASR] 進入主動錄音模式，等待指令…", flush=True)
 
     def send_audio_frame(self, data: bytes):
@@ -555,8 +577,11 @@ class GoogleASR:
                 self._recent_buf = self._recent_buf[-self._recent_max_bytes:]
 
         self._audio_queue.put(data)
-        if self._mode == "active" and _calc_rms(data) > self.SILENCE_RMS_THRESH:
-            self._last_voice_ts = time.monotonic()
+        if self._mode == "active":
+            if _calc_rms(data) > self.SILENCE_RMS_THRESH:
+                self._last_voice_ts = time.monotonic()
+            # 即使沒 ASR partial 也要檢查超時，否則純背景雜訊會讓 active 永不退出
+            self._check_active_timeout()
 
     # ── 內部方法 ────────────────────────────────────────────────────────────
 
@@ -600,14 +625,34 @@ class GoogleASR:
         else:
             # 主動模式：即時顯示 partial，final 派發指令
             self._handle_active(transcript, is_final)
-            # 靜音 / 超時 → 切回待機
-            now = time.monotonic()
-            if (now - self._last_voice_ts >= self.SILENCE_SEC or
-                    now - self._active_start >= self.ACTIVE_MAX_SEC):
-                reason = "靜音" if now - self._last_voice_ts >= self.SILENCE_SEC else "超時"
-                print(f"[GoogleASR] 主動模式結束（{reason}）", flush=True)
-                self._mode = "standby"
-                self._callback.on_recording_end()  # 播放「結束收音」音效
+            self._check_active_timeout()
+
+    def _check_active_timeout(self) -> bool:
+        """檢查主動模式是否該結束（靜音 / 超時）。回 True 表示已結束。
+
+        send_audio_frame 與 _handle_result 都會呼叫，避免無 ASR partial 時 active 卡住。
+        雙重檢查 _mode 防止 race condition 造成 on_recording_end 被連調兩次。
+        """
+        if self._mode != "active":
+            return False
+        now = time.monotonic()
+        silence_elapsed = now - self._last_voice_ts >= self.SILENCE_SEC
+        timeout_elapsed = now - self._active_start >= self.ACTIVE_MAX_SEC
+        if not (silence_elapsed or timeout_elapsed):
+            return False
+        if self._mode != "active":
+            return False
+        reason = "靜音" if silence_elapsed else "超時"
+        print(f"[GoogleASR] 主動模式結束（{reason}）", flush=True)
+        self._mode = "standby"
+        # 通知 audio_player 退出 ASR 主動模式 → 恢復導航 TTS 播報
+        try:
+            from audio_player import set_asr_active_mode
+            set_asr_active_mode(False)
+        except Exception:
+            pass
+        self._callback.on_recording_end()
+        return True
 
     def _check_wake_word(self, text: str):
         # 旁路模式（全域或實例級）：跳過喚醒詞，STT 結果直接派發給 AI
@@ -641,6 +686,10 @@ class GoogleASR:
         # 結束對話改由主動模式靜音 / 超時自動結束（_handle_result），不再偵測結束詞
         event = {"output": {"sentence": {"text": text, "sentence_end": is_final}}}
         self._callback.on_event(event)
+        # 還在說話中（有 partial）→ 延長 12s 上限，避免在 TTS 干擾下 final 還沒到就切回 standby
+        # （ASR 在 active 模式收到非空 partial = 使用者仍在輸入指令）
+        if not is_final and text.strip():
+            self._active_start = time.monotonic()
 
     def _stream_loop(self):
         """主串流執行緒：含自動重啟邏輯"""

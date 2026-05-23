@@ -29,6 +29,8 @@ WAKE_HIT = [
 WAKE_MISS = [
     "幫我看前面", "開始導航", "今天天氣如何",
     "你好", "曼波", "謝謝", "",
+    # 英文整詞匹配：halo 子字串不應誤命中（halogen / halocline 等）
+    "halogen lamp", "halocline study", "shallow water",
 ]
 
 
