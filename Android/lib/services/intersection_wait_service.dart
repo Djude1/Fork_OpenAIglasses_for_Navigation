@@ -54,6 +54,7 @@ class IntersectionWaitService {
 
   DateTime? _stillSince;     // 連續靜止起點（speed < 閾值）
   DateTime? _waitStart;      // 真正停等開始時刻（_stillSince 持續 >= _enterWaitDelaySec）
+  Position? _waitStartPosition; // 停等開始位置（上傳/heartbeat 都用這個算 grid_id，避免邊界跳格）
   Position?  _latestPosition;
   DateTime? _lastHeartbeatAt;
   DateTime? _lastQueryAt;
@@ -105,6 +106,7 @@ class IntersectionWaitService {
     _enabled = false;
     _stillSince = null;
     _waitStart = null;
+    _waitStartPosition = null;
     _latestPosition = null;
     _lastHeartbeatAt = null;
     _lastQueryAt = null;
@@ -125,15 +127,17 @@ class IntersectionWaitService {
       if (_waitStart == null &&
           now.difference(_stillSince!).inSeconds >= _enterWaitDelaySec) {
         _waitStart = _stillSince;
+        _waitStartPosition = p; // 鎖定停等位置，後續 heartbeat / report 都用這個 grid_id
         debugPrint('[IntersectionWait] 進入停等：lat=${p.latitude}, lng=${p.longitude}');
       }
     } else {
       // 開始移動：若先前在停等，結算並上傳
       if (_waitStart != null) {
-        _completeWait(p);
+        _completeWait();
       }
       _stillSince = null;
       _waitStart = null;
+      _waitStartPosition = null;
     }
   }
 
@@ -146,9 +150,11 @@ class IntersectionWaitService {
 
     if (_waitStart != null) {
       // 停等中：heartbeat + 定期查詢路口資訊
+      // 用「停等起始位置」算 grid_id，與結算上傳一致，避免邊界抖動跨格
+      final anchor = _waitStartPosition ?? p;
       final waitSec = now.difference(_waitStart!).inSeconds;
-      _maybeHeartbeat(p, now);
-      _maybeQueryInfo(p, now);
+      _maybeHeartbeat(anchor, now);
+      _maybeQueryInfo(anchor, now);
       _emitStatus(isWaiting: true, currentWaitSec: waitSec);
     } else {
       _emitStatus(isWaiting: false, currentWaitSec: 0);
@@ -189,8 +195,14 @@ class IntersectionWaitService {
   }
 
   // ── 結算停等 ────────────────────────────────────────────────────────────
-  void _completeWait(Position endPosition) {
+  void _completeWait() {
     if (_api == null || _deviceHash == null || _waitStart == null) return;
+    // 用「停等起始位置」上傳，與 heartbeat 同一 grid_id，server 才能正確 delete ActiveWaiter
+    final anchor = _waitStartPosition;
+    if (anchor == null) {
+      debugPrint('[IntersectionWait] _waitStartPosition 為 null，跳過上傳');
+      return;
+    }
     final endedAt = DateTime.now();
     final duration = endedAt.difference(_waitStart!).inSeconds;
     if (duration < _minReportSec) {
@@ -199,8 +211,8 @@ class IntersectionWaitService {
     }
     debugPrint('[IntersectionWait] 結算停等：$duration s，上傳中…');
     _api!.reportWait(
-      lat: endPosition.latitude,
-      lng: endPosition.longitude,
+      lat: anchor.latitude,
+      lng: anchor.longitude,
       durationSec: duration,
       deviceHash: _deviceHash!,
       startedAt: _waitStart!,
