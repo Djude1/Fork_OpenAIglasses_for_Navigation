@@ -13,17 +13,20 @@ cd Website && docker compose up --build     # 網站 port 8888
 
 > ⚠️ **禁止**用 `app_main.py` 當正式啟動指令，那是單機開發用途。
 
-## YOLO 模型分工（model/ALL.pt）
+## YOLO 模型分工
 
-| 功能 | PT 檔案 | 用到的 class |
-|------|---------|-------------|
-| 盲道分割 | `model/ALL.pt` | 8=guide_bricks, 9=crossing_crosswalk |
-| 障礙物偵測 | `model/ALL.pt` | 0~7（person/bicycle/car 等）|
-| 紅綠燈偵測 | `model/ALL.pt` | 10=crossing_green_light, 11=crossing_red_light |
-| 物品尋找 | `model/shoppingbest5.pt` | 獨立（yolomedia.py 按需載入）|
+模型路徑由 `.env` 控制（`BLIND_PATH_MODEL` / `OBSTACLE_MODEL` / `TRAFFICLIGHT_MODEL`），目前使用三個獨立模型：
+
+| 功能 | PT 檔案 | 類別 |
+|------|---------|------|
+| 盲道分割 | `model/yolo-seg.pt` | `blind_path` / `guide_bricks`、`road_crossing` / `crossing_crosswalk` |
+| 障礙物偵測 | `model/yoloe-26s-seg.pt`（YOLOE）| OBSTACLE_WHITELIST 28 類（person / bicycle / car / pole / chair / stairs…）|
+| 紅綠燈偵測 | `model/trafficlight.pt` | 紅／綠／黃燈 |
+| 物品尋找 | `model/shoppingbest5.pt` | 獨立（`yolomedia.py` 按需載入）|
 
 所有模型由 `model_server.py`（port 9099）集中載入一次，4 台 app_main 共用。
 相同路徑的 .pt 只載入一次（共用 VRAM + 共用推論鎖）。
+> 舊「ALL.pt 三功能合一」模型仍在 `model/`，目前 `.env` 未使用。
 
 ## Port 分工
 
@@ -52,7 +55,7 @@ cd Website && docker compose up --build     # 網站 port 8888
 | 語音對話 + 場景描述 | Gemini 2.5 Flash（Vertex AI 優先）|
 | 導航 TTS | WaveNet（cmn-TW-Wavenet-A）|
 | 對話 TTS | Gemini TTS（gemini-2.5-flash-preview-tts）|
-| 盲道/障礙/紅綠燈 | 本地 YOLO 模型（model/ALL.pt）|
+| 盲道/障礙/紅綠燈 | 本地 YOLO 模型(yolo-seg.pt / yoloe-26s-seg.pt / trafficlight.pt)|
 
 ## Android APP 語音架構（三層優先順序）
 
