@@ -486,7 +486,7 @@ class GoogleASR:
     - 主動模式（active）：收到喚醒詞後啟動，靜音超過 SILENCE_SEC 即結束並派發指令
     """
 
-    SILENCE_SEC:        float = 2.5    # 主動模式靜音判斷秒數（延長避免截斷指令）
+    SILENCE_SEC:        float = 2.0    # 主動模式靜音判斷秒數（盲人講完一句後 2s 沒新聲音即結束收音）
     SILENCE_RMS_THRESH: float = 80.0  # RMS 低於此值視為靜音（降低以提升收音靈敏度）
     GRACE_PERIOD_SEC:   float = 6.5    # 進入 active 後 grace 期：盲人需要聽完「開始對話」chime
                                        # + 反應 + 開講，此段時間內 silence 不算結束（含 chime 播放）
