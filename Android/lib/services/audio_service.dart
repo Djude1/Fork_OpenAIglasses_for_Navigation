@@ -42,10 +42,17 @@ class AudioService {
 
   /// 內部啟動 stream（首次啟動 + 自動重啟共用）
   Future<void> _startInternal() async {
+    // AEC：voiceCommunication 音源 + modeInCommunication 音訊管理模式
+    // 讓 Android 系統自動扣除「自家喇叭播出的 TTS」對麥克風訊號的回灌，
+    // 避免 server TTS → APP 喇叭 → 麥克風 → ASR 干擾辨識的 echo loop。
     final stream = await _recorder.startStream(const RecordConfig(
       encoder:    AudioEncoder.pcm16bits,
       sampleRate: 16000,
       numChannels: 1,
+      androidConfig: AndroidRecordConfig(
+        audioSource: AndroidAudioSource.voiceCommunication,
+        audioManagerMode: AudioManagerMode.modeInCommunication,
+      ),
     ));
 
     _lastChunkAt = DateTime.now();
