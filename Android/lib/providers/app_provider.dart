@@ -74,9 +74,9 @@ class AppProvider extends ChangeNotifier {
   double get ttsSpeechRate => _ttsSpeechRate;
 
   // ── 喚醒詞設定 ─────────────────────────────────────────────────────────────
-  // true  → 需要先說「哈囉」才會開始接收語音指令
-  // false → 語音直接送 AI 處理（預設關閉喚醒詞）
-  bool _wakeWordEnabled = false;
+  // true  → 需要先說「哈囉」或按 WAKE 才會開始接收語音指令（預設）
+  // false → 旁路模式，語音直接送 AI 處理（課堂轉錄等情境）
+  bool _wakeWordEnabled = true;
   bool get wakeWordEnabled => _wakeWordEnabled;
 
   // ── ASR 收音狀態 ───────────────────────────────────────────────────────────
@@ -217,7 +217,7 @@ class AppProvider extends ChangeNotifier {
     _ttsEnabled      = prefs.getBool('tts_enabled')        ?? true;
     _ttsSpeechRate   = prefs.getDouble('tts_speech_rate') ?? 0.5;
     _positionMode    = prefs.getString('position_mode')   ?? 'clock';
-    _wakeWordEnabled = prefs.getBool('wake_word_enabled') ?? false;
+    _wakeWordEnabled = prefs.getBool('wake_word_enabled') ?? true;
 
     await _tts.setLanguage('zh-TW');
     await _tts.setSpeechRate(_ttsSpeechRate);

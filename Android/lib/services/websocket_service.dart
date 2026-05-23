@@ -69,9 +69,9 @@ class WebSocketService {
   WebSocketChannel?   _audioWs;
   StreamSubscription? _audioWsSub;
   bool _audioWsActive = false;
-  bool _bypassWake    = true;   // 預設繞過喚醒詞
+  bool _bypassWake    = false;  // 預設啟用喚醒詞模式
 
-  void connectAudio({bool bypassWake = true}) {
+  void connectAudio({bool bypassWake = false}) {
     _audioWsActive = true;
     _bypassWake    = bypassWake;
     _doConnectAudio();
