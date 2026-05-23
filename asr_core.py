@@ -488,7 +488,9 @@ class GoogleASR:
 
     SILENCE_SEC:        float = 2.5    # 主動模式靜音判斷秒數（延長避免截斷指令）
     SILENCE_RMS_THRESH: float = 80.0  # RMS 低於此值視為靜音（降低以提升收音靈敏度）
-    ACTIVE_MAX_SEC:     float = 12.0   # 主動模式最長錄音時間
+    ACTIVE_MAX_SEC:     float = 12.0   # 主動模式最長錄音時間（partial 可重置 _active_start）
+    ACTIVE_ABSOLUTE_MAX_SEC: float = 25.0  # active 進入後絕對上限（partial 不能重置），
+                                            # 防止 echo / 雜訊持續 partial 造成 infinite active
     STREAM_RESTART_SEC: float = 200.0  # Google 串流 5 分鐘上限，提前重啟
     # 說話人驗證用的近期音訊緩衝（滑動視窗保留最近 N 秒音訊）
     _RECENT_BUF_SEC:    float = 5.0    # 保留最近 5 秒供聲紋比對
@@ -504,6 +506,7 @@ class GoogleASR:
         self._mode             = "standby"
         self._last_voice_ts    = 0.0
         self._active_start     = 0.0
+        self._active_enter_ts  = 0.0   # 絕對 enter active 時間（partial 不重置）
         self._stream_thread: Optional[threading.Thread] = None
 
         # 近期音訊滑動緩衝（用於說話人驗證）
@@ -538,10 +541,11 @@ class GoogleASR:
         # _mode=active 但讀到 _last_voice_ts 的舊值（0.0 或前一輪結束時間），
         # 導致 _check_active_timeout 誤判已靜音 2.5 秒立刻結束 active。
         now = time.monotonic()
-        self._active_start  = now
-        self._last_voice_ts = now
+        self._active_start    = now
+        self._active_enter_ts = now   # 絕對上限基準，partial 不重置
+        self._last_voice_ts   = now
         self._mode = "active"
-        # 通知 audio_player 進入 ASR 主動模式 → 暫停導航 TTS，避免 echo 干擾
+        # 通知 audio_player 進入 ASR 主動模式 → 暫停導航 TTS + 清空已排隊 PCM
         try:
             from audio_player import set_asr_active_mode
             set_asr_active_mode(True)
@@ -628,7 +632,7 @@ class GoogleASR:
             self._check_active_timeout()
 
     def _check_active_timeout(self) -> bool:
-        """檢查主動模式是否該結束（靜音 / 超時）。回 True 表示已結束。
+        """檢查主動模式是否該結束（靜音 / 超時 / 絕對上限）。回 True 表示已結束。
 
         send_audio_frame 與 _handle_result 都會呼叫，避免無 ASR partial 時 active 卡住。
         雙重檢查 _mode 防止 race condition 造成 on_recording_end 被連調兩次。
@@ -636,13 +640,21 @@ class GoogleASR:
         if self._mode != "active":
             return False
         now = time.monotonic()
-        silence_elapsed = now - self._last_voice_ts >= self.SILENCE_SEC
-        timeout_elapsed = now - self._active_start >= self.ACTIVE_MAX_SEC
-        if not (silence_elapsed or timeout_elapsed):
+        silence_elapsed  = now - self._last_voice_ts   >= self.SILENCE_SEC
+        timeout_elapsed  = now - self._active_start    >= self.ACTIVE_MAX_SEC
+        # 絕對上限：partial 重置 _active_start 防止短話被截斷，但若 echo / 雜訊
+        # 持續送 partial，active 會無限延長，所以加一個 partial 不能重置的絕對上限
+        absolute_elapsed = now - self._active_enter_ts >= self.ACTIVE_ABSOLUTE_MAX_SEC
+        if not (silence_elapsed or timeout_elapsed or absolute_elapsed):
             return False
         if self._mode != "active":
             return False
-        reason = "靜音" if silence_elapsed else "超時"
+        if absolute_elapsed:
+            reason = "絕對上限"
+        elif silence_elapsed:
+            reason = "靜音"
+        else:
+            reason = "超時"
         print(f"[GoogleASR] 主動模式結束（{reason}）", flush=True)
         self._mode = "standby"
         # 通知 audio_player 退出 ASR 主動模式 → 恢復導航 TTS 播報

@@ -69,9 +69,24 @@ _asr_active_mode = False
 _ASR_ACTIVE_AUDIO_WHITELIST = {"開始對話", "結束收音"}
 
 def set_asr_active_mode(active: bool) -> None:
-    """ASR 進入主動模式 → True；結束 → False。期間導航 TTS 不播，避免 echo loop。"""
-    global _asr_active_mode
+    """ASR 進入主動模式 → True；結束 → False。期間導航 TTS 不播，避免 echo loop。
+
+    active 開始時還要清空已排隊的 PCM，否則「ASR active 之前剛 enqueue 的 TTS」
+    （如「盲道導航已開始」「紅燈，請停止」等）仍會被 worker 取出推給 APP 播放，
+    APP 喇叭發聲 → 麥克風收 echo → ASR partial 干擾辨識 → 使用者真實指令被埋沒。
+    """
+    global _asr_active_mode, _audio_queue
     _asr_active_mode = active
+    if active:
+        # 雙保險：先 drain 舊 queue（worker 透過 bound method 持有的 ref 也會見到 empty）
+        # 再 reassign 新的（new put 進這個）
+        try:
+            while True:
+                _audio_queue.get_nowait()
+        except queue.Empty:
+            pass
+        _audio_queue = queue.PriorityQueue(maxsize=10)
+        print("[AUDIO] ASR active 開始：已清空 audio_player 排隊 PCM")
 _initialized = False
 _last_play_ts = 0.0  # 记录上次播放结束时间，用于决定预热静音长度
 
