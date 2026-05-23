@@ -507,6 +507,8 @@ class GoogleASR:
         self._last_voice_ts    = 0.0
         self._active_start     = 0.0
         self._active_enter_ts  = 0.0   # 絕對 enter active 時間（partial 不重置）
+        self._last_partial_text = ""   # active 期間最近一個非空 partial；active 結束且
+                                       # Google 尚未送 final 時，視為 final 派發（修 Bug 1）
         self._stream_thread: Optional[threading.Thread] = None
 
         # 近期音訊滑動緩衝（用於說話人驗證）
@@ -544,6 +546,7 @@ class GoogleASR:
         self._active_start    = now
         self._active_enter_ts = now   # 絕對上限基準，partial 不重置
         self._last_voice_ts   = now
+        self._last_partial_text = ""  # 重置上輪 active 殘留，避免錯派發
         self._mode = "active"
         # 通知 audio_player 進入 ASR 主動模式 → 暫停導航 TTS + 清空已排隊 PCM
         try:
@@ -588,6 +591,24 @@ class GoogleASR:
             self._check_active_timeout()
 
     # ── 內部方法 ────────────────────────────────────────────────────────────
+
+    def _restart_stream(self):
+        """強制讓當前 Google STT 串流結束，由 outer loop 自動開新 session。
+
+        用途：active 結束時清掉 Google 那邊累積的 partial buffer，
+        避免下次 active 的 partial 與舊未送 final 的內容混在一起。
+        """
+        drained = 0
+        try:
+            while True:
+                self._audio_queue.get_nowait()
+                drained += 1
+        except queue.Empty:
+            pass
+        # sentinel：_audio_generator 看到 None 即 return，
+        # _stream_loop 的 while self._running 仍 True → 自動重新呼叫 streaming_recognize
+        self._audio_queue.put(None)
+        print(f"[GoogleASR] 重啟串流（drain {drained} chunk）", flush=True)
 
     def _audio_generator(self, stop_event: threading.Event):
 
@@ -656,6 +677,18 @@ class GoogleASR:
         else:
             reason = "超時"
         print(f"[GoogleASR] 主動模式結束（{reason}）", flush=True)
+        # Fallback：Google 常在使用者停話後 1~3 秒才送 final，但本地 SILENCE_SEC 已切回 standby，
+        # 後續真正 final 會走待機分支被「無喚醒詞」忽略 → 指令丟失。
+        # 此處在切 standby 前，主動把最後一個 partial 視為 final 派發（修 Bug 1）。
+        pending = self._last_partial_text
+        self._last_partial_text = ""
+        if pending:
+            print(f"[GoogleASR] 最後 partial 視為 final: '{pending}'", flush=True)
+            pending_event = {"output": {"sentence": {"text": pending, "sentence_end": True}}}
+            try:
+                self._callback.on_event(pending_event)
+            except Exception:
+                pass
         self._mode = "standby"
         # 通知 audio_player 退出 ASR 主動模式 → 恢復導航 TTS 播報
         try:
@@ -664,6 +697,9 @@ class GoogleASR:
         except Exception:
             pass
         self._callback.on_recording_end()
+        # 強制重啟 Google STT 串流：清掉 Google 內部累積的 partial buffer，
+        # 避免下次 active 把舊 partial 跟新講話混在一起（修 Bug 2）。
+        self._restart_stream()
         return True
 
     def _check_wake_word(self, text: str):
@@ -698,10 +734,15 @@ class GoogleASR:
         # 結束對話改由主動模式靜音 / 超時自動結束（_handle_result），不再偵測結束詞
         event = {"output": {"sentence": {"text": text, "sentence_end": is_final}}}
         self._callback.on_event(event)
-        # 還在說話中（有 partial）→ 延長 12s 上限，避免在 TTS 干擾下 final 還沒到就切回 standby
-        # （ASR 在 active 模式收到非空 partial = 使用者仍在輸入指令）
-        if not is_final and text.strip():
+        stripped = text.strip()
+        if is_final:
+            # Google 自然送出 final → 清空 partial 暫存，避免 _check_active_timeout 重複派發
+            self._last_partial_text = ""
+        elif stripped:
+            # 還在說話中（有 partial）→ 延長 12s 上限，避免在 TTS 干擾下 final 還沒到就切回 standby
+            # 同時記下最後 partial，供 active 結束時（Google 未及時 final）fallback 視為 final 派發
             self._active_start = time.monotonic()
+            self._last_partial_text = stripped
 
     def _stream_loop(self):
         """主串流執行緒：含自動重啟邏輯"""
