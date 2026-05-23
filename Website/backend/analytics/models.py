@@ -71,7 +71,9 @@ class IntersectionWaitEvent(models.Model):
         verbose_name_plural = '路口停等事件'
         ordering = ['-ended_at']
         indexes = [
-            models.Index(fields=['grid_id', '-ended_at']),
+            # name 顯式鎖死，避免不同環境 makemigrations 產生 hash 漂移 rename migration
+            # 值對齊 0003 migration 已套用的目標名稱
+            models.Index(fields=['grid_id', '-ended_at'], name='analytics_i_grid_id_fe8c50_idx'),
         ]
 
     def __str__(self):
@@ -92,7 +94,8 @@ class ActiveWaiter(models.Model):
         verbose_name_plural = '即時等候裝置'
         unique_together = [('grid_id', 'device_hash')]
         indexes = [
-            models.Index(fields=['grid_id', 'last_seen_at']),
+            # name 顯式鎖死，避免 hash 漂移；值對齊 0003 migration 已套用的目標名稱
+            models.Index(fields=['grid_id', 'last_seen_at'], name='analytics_a_grid_id_33c7a9_idx'),
         ]
 
     def __str__(self):

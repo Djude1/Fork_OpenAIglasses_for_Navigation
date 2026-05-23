@@ -2,10 +2,11 @@
 公開流量追蹤 API（前端 SPA 主動上報頁面瀏覽）
 + APP 端路口停等事件群眾外包 API
 """
-from datetime import timedelta
+from datetime import timedelta, timezone as dt_timezone
 
 from django.db.models import Avg, Count
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -21,6 +22,7 @@ MIN_WAIT_SEC = 3            # 太短的停等視為雜訊，不收
 MAX_WAIT_SEC = 600          # 10 分鐘以上視為異常，不收
 ACTIVE_WINDOW_SEC = 30      # 視為「目前還在等」的時間窗
 INFO_LOOKBACK_DAYS = 30     # 平均停等只看近 30 天
+DURATION_TOLERANCE_SEC = 5  # duration_sec 與 (ended_at - started_at) 容差
 
 
 def _quantize(value):
@@ -33,6 +35,21 @@ def _quantize(value):
 
 def _valid_device(h):
     return isinstance(h, str) and len(h) == DEVICE_HASH_LEN
+
+
+def _parse_iso(value):
+    """安全 parse ISO8601 → aware datetime；失敗回 None。"""
+    if not isinstance(value, str):
+        return None
+    try:
+        dt = parse_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if dt is None:
+        return None
+    if timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, dt_timezone.utc)
+    return dt
 
 
 class TrackPageView(APIView):
@@ -64,8 +81,8 @@ class IntersectionWaitReportView(APIView):
         lng = _quantize(request.data.get('lng'))
         duration = request.data.get('duration_sec')
         device_hash = request.data.get('device_hash')
-        started_at = request.data.get('started_at')
-        ended_at = request.data.get('ended_at')
+        started_at_raw = request.data.get('started_at')
+        ended_at_raw = request.data.get('ended_at')
 
         if lat is None or lng is None:
             return Response({'ok': False, 'error': 'invalid_coords'}, status=400)
@@ -78,6 +95,19 @@ class IntersectionWaitReportView(APIView):
         if not (MIN_WAIT_SEC <= duration <= MAX_WAIT_SEC):
             return Response({'ok': False, 'error': 'duration_out_of_range'}, status=400)
 
+        # ISO8601 解析：失敗或不一致即拒收，避免惡意 client 灌假時序
+        now = timezone.now()
+        started_at = _parse_iso(started_at_raw) if started_at_raw else now
+        ended_at = _parse_iso(ended_at_raw) if ended_at_raw else now
+        if started_at is None or ended_at is None:
+            return Response({'ok': False, 'error': 'invalid_timestamp'}, status=400)
+        if started_at > ended_at:
+            return Response({'ok': False, 'error': 'started_after_ended'}, status=400)
+        # duration_sec 與時間差異常：容忍 ±5 秒（client 計時與 wall clock 微差）
+        actual = (ended_at - started_at).total_seconds()
+        if abs(actual - duration) > DURATION_TOLERANCE_SEC:
+            return Response({'ok': False, 'error': 'duration_mismatch'}, status=400)
+
         grid_id = latlng_to_grid_id(lat, lng)
         IntersectionWaitEvent.objects.create(
             grid_id=grid_id,
@@ -85,8 +115,8 @@ class IntersectionWaitReportView(APIView):
             lng=lng,
             duration_sec=duration,
             device_hash=device_hash,
-            started_at=started_at or timezone.now(),
-            ended_at=ended_at or timezone.now(),
+            started_at=started_at,
+            ended_at=ended_at,
         )
         # 結束停等 → 清掉這台在這格的 active 標記
         ActiveWaiter.objects.filter(grid_id=grid_id, device_hash=device_hash).delete()
