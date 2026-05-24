@@ -837,6 +837,20 @@ async def start_ai_with_text_custom(user_text: str):
 
             return
 
+    # 「打給XX」/「聯絡XX」/「打電話XX」/「撥給XX」：APP 端 _checkEmergencyCall
+    # 會比對聯絡人並自動撥打。server 不送 LLM（否則「打給爸爸」會被當對話送
+    # Gemini，看圖瞎掰「你爸爸的電腦鍵盤燈光在變化」等亂七八糟內容）。
+    # ASR FINAL 已在 ASRCallback._handle 廣播給 APP，不會因為這裡 return 而漏。
+    contact_call_keywords = [
+        "打給", "打给", "聯絡", "联络", "打電話", "打电话", "撥給", "拨给",
+    ]
+    if any(k in user_text for k in contact_call_keywords):
+        print(
+            f"[CONTACT-CALL] APP 端會處理（_checkEmergencyCall），server 跳過 LLM: '{user_text}'",
+            flush=True,
+        )
+        return
+
     # 检查是否是"找到了"的命令
     if "找到了" in user_text or "拿到了" in user_text:
         print("[COMMAND] Found command detected", flush=True)

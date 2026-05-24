@@ -916,6 +916,8 @@ class AppProvider extends ChangeNotifier {
 
     // 去掉 FINAL: 前綴後再比對，避免前綴干擾中文比對
     final text  = msg.startsWith('FINAL:') ? msg.substring(6) : msg;
+    // [ 開頭是 server 廣播（[系统]/[导航]/[AI] 等），不是使用者真實語音 → 跳過
+    if (text.startsWith('[')) return;
     final lower = text.toLowerCase();
 
     for (final c in _contacts) {
@@ -924,9 +926,21 @@ class AppProvider extends ChangeNotifier {
           lower.contains('聯絡$name') ||
           lower.contains('call $name') ||
           (lower.contains(name) && lower.contains('打電話'))) {
+        debugPrint('[EMERGENCY-CALL] 命中聯絡人「${c['name']}」→ 撥打 ${c['phone']}（原文："$text"）');
         _initiateCall(c['name'] as String, c['phone'] as String);
         return;
       }
+    }
+    // 有撥打意圖但沒命中任何聯絡人 → 印 log 方便判斷
+    // （可能 ASR 把名字辨錯、或聯絡人沒設、或意圖字串沒涵蓋到）
+    final hasCallIntent = lower.contains('打給') || lower.contains('打给') ||
+        lower.contains('打電話') || lower.contains('打电话') ||
+        lower.contains('聯絡') || lower.contains('联络') ||
+        lower.contains('撥給') || lower.contains('拨给');
+    if (hasCallIntent) {
+      final names = _contacts.map((c) => c['name']).toList();
+      debugPrint('[EMERGENCY-CALL] 偵測到撥打意圖但聯絡人不匹配: "$text"，'
+          '聯絡人清單: $names');
     }
   }
 
