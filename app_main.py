@@ -1001,6 +1001,7 @@ async def start_ai_with_text(user_text: str):
                         pcm24 = base64.b64decode(piece.audio_b64)
                     except Exception:
                         pcm24 = b""
+                    print(f"[TTS-DEBUG] app_main received audio_b64: decoded={len(pcm24)} bytes (24k)", flush=True)
                     if pcm24:
                         # 24k → 8k (使用ratecv保证音调和速度不变)
                         pcm8k, rate_state = audioop.ratecv(
@@ -1008,7 +1009,10 @@ async def start_ai_with_text(user_text: str):
                         )
                         pcm8k = audioop.mul(pcm8k, 2, 0.60)
                         if pcm8k:
+                            print(f"[TTS-DEBUG] app_main broadcast_pcm16_realtime: {len(pcm8k)} bytes (8k)", flush=True)
                             await broadcast_pcm16_realtime(pcm8k)
+                        else:
+                            print(f"[TTS-DEBUG] app_main resample 後 pcm8k 為空，跳過 broadcast", flush=True)
 
         except asyncio.CancelledError:
             # 被新一轮打断
