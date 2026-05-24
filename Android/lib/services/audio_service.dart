@@ -24,6 +24,21 @@ class AudioService {
   Timer? _micWatchdog;
   bool _restarting = false;            // 防止 onError + watchdog 同時重啟
 
+  // DEBUG：mic 幀率追蹤（每秒印一次）— 診斷「WAKE 後 mic 不送幀」
+  int _micChunkCountWindow = 0;
+  int _micBytesWindow = 0;
+  DateTime _micRateWindowStart = DateTime.now();
+
+  // DEBUG：mic 全域累計（給 app_provider 在 cycle 結束時印 summary）
+  int _micTotalChunks = 0;
+  int _micTotalSamples = 0;
+  int get micTotalChunks => _micTotalChunks;
+  int get micTotalSamples => _micTotalSamples;
+  void resetMicCounter() {
+    _micTotalChunks = 0;
+    _micTotalSamples = 0;
+  }
+
   // ── TTS 串流重連狀態 ─────────────────────────────────────────────────────
   bool _shouldPlayStream = false;   // 是否應維持串流播放
   bool _isReconnecting   = false;   // 防止多個重連同時觸發
@@ -57,9 +72,27 @@ class AudioService {
     ));
 
     _lastChunkAt = DateTime.now();
+    _micRateWindowStart = DateTime.now();
+    _micChunkCountWindow = 0;
+    _micBytesWindow = 0;
+    debugPrint('[MIC-DEBUG] startStream OK @ ${DateTime.now().toIso8601String()}');
     _recordSub = stream.listen(
       (data) {
         _lastChunkAt = DateTime.now();
+        _micChunkCountWindow++;
+        _micBytesWindow += data.length;
+        _micTotalChunks++;
+        _micTotalSamples += data.length ~/ 2;  // PCM16
+        final elapsedMs = DateTime.now().difference(_micRateWindowStart).inMilliseconds;
+        if (elapsedMs >= 1000) {
+          final samples = _micBytesWindow ~/ 2;  // PCM16
+          final audioMs = samples * 1000 ~/ 16000;
+          debugPrint('[MIC-RATE] last ${elapsedMs}ms: $_micChunkCountWindow chunks, '
+              '$samples samples (=${audioMs}ms audio) @ ${DateTime.now().toIso8601String()}');
+          _micChunkCountWindow = 0;
+          _micBytesWindow = 0;
+          _micRateWindowStart = DateTime.now();
+        }
         _onChunkCb?.call(Uint8List.fromList(data));
       },
       onError: (e) {
@@ -74,18 +107,29 @@ class AudioService {
     );
   }
 
-  /// Watchdog：5 秒沒新 chunk → 強制重啟麥克風
+  /// Watchdog：2 秒沒新 chunk → 強制重啟麥克風
   /// （即使 stream 沒拋 onError/onDone，半關閉狀態也能恢復）
+  /// 從 5 秒縮到 2 秒：chime 播放後 Android 暫停 AudioRecord callback，
+  /// LocalVoiceService.onChimeComplete 會主動觸發 restart，watchdog 為保底
   void _startMicWatchdog() {
     _micWatchdog?.cancel();
-    _micWatchdog = Timer.periodic(const Duration(seconds: 2), (_) {
+    _micWatchdog = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!_recording) return;
-      final since = DateTime.now().difference(_lastChunkAt).inSeconds;
-      if (since >= 5) {
-        debugPrint('[AudioService] watchdog: ${since}s 無新 audio chunk → 重啟麥克風');
-        _restartMic('watchdog ${since}s no chunk');
+      final since = DateTime.now().difference(_lastChunkAt).inMilliseconds;
+      if (since >= 2000) {
+        debugPrint('[AudioService] watchdog: ${since}ms 無新 audio chunk → 重啟麥克風');
+        _restartMic('watchdog ${since}ms no chunk');
       }
     });
+  }
+
+  /// 外部主動觸發 mic 重啟（chime 播完後立刻呼叫，不等 watchdog）
+  /// audioplayers 播 chime 時 Android AudioFlinger 暫停 voiceRecognition
+  /// AudioRecord callback，chime 結束不會自動恢復，需主動 restart。
+  Future<void> restartMicNow(String reason) async {
+    if (!_recording || _restarting) return;
+    debugPrint('[AudioService] restartMicNow: $reason');
+    await _restartMic(reason);
   }
 
   Future<void> _restartMic(String reason) async {

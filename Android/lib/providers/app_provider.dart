@@ -87,6 +87,10 @@ class AppProvider extends ChangeNotifier {
   String get asrState => _asrState;
   bool get isListening => _asrState == 'listening';
 
+  // DEBUG：收音 cycle 計數（對齊 server [ASR-CYCLE]，診斷 mic 上行）
+  int _asrCycleCounter = 0;
+  DateTime? _asrCycleStart;
+
   // ── ASR 辨識文字追蹤 ──────────────────────────────────────────────────────
   String _asrPartialText = '';          // 即時辨識中的文字
   String get asrPartialText => _asrPartialText;
@@ -225,6 +229,12 @@ class AppProvider extends ChangeNotifier {
     // 背景預載固定語音快取（不阻塞啟動流程）
     VoiceCacheService.instance.init(_tts);
     LocalVoiceService.instance.init(); // 載入 assets/voice_map.json
+    // chime 播完 → 主動 restart mic（audioplayers 播 chime 期間 Android
+    // 暫停 voiceRecognition AudioRecord callback，不會自動恢復）
+    LocalVoiceService.instance.onChimeComplete = () {
+      debugPrint('[AppProvider] chime 完成 → 主動 restart mic');
+      _audio.restartMicNow('chime completed');
+    };
 
     // 接收原生端（Kotlin）的音量鍵手動喚醒事件
     _appControlChannel.setMethodCallHandler(_handleNativeMethodCall);
@@ -747,10 +757,24 @@ class AppProvider extends ChangeNotifier {
       final durationMs = (data['duration_ms'] as num?)?.toInt() ?? 2000;
       if (text.isEmpty) return;
 
-      // 追蹤 ASR 音效，更新收音狀態
+      // 追蹤 ASR 音效，更新收音狀態 + cycle log（對齊 server [ASR-CYCLE]）
       if (text == '開始對話') {
+        _asrCycleCounter++;
+        _asrCycleStart = DateTime.now();
+        _audio.resetMicCounter();
+        debugPrint('[ASR-CYCLE-APP] ========== 收音 #$_asrCycleCounter 開始 @ '
+            '${_asrCycleStart!.toIso8601String()} ==========');
         _updateAsrState('listening');
       } else if (text == '結束收音') {
+        final now = DateTime.now();
+        final durMs = _asrCycleStart != null
+            ? now.difference(_asrCycleStart!).inMilliseconds : -1;
+        final chunks = _audio.micTotalChunks;
+        final samples = _audio.micTotalSamples;
+        final audioMs = samples * 1000 ~/ 16000;
+        debugPrint('[ASR-CYCLE-APP] ========== 收音 #$_asrCycleCounter 結束 @ '
+            '${now.toIso8601String()}（duration=${durMs}ms, '
+            'mic_chunks=$chunks, mic_audio=${audioMs}ms）==========');
         _updateAsrState('standby');
       }
 
