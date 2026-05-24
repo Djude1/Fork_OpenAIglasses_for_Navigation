@@ -519,7 +519,8 @@ class AppProvider extends ChangeNotifier {
     _ws.connectImu();
 
     await _startCamera();
-    _imu.start(onData: (d) => _ws.sendImu(d));
+    // IMU 200ms（5 Hz）上行，撞擊偵測仍即時（raw accel callback 內判斷）
+    _imu.start(onData: (d) => _ws.sendImu(d), intervalMs: 200);
 
     // 重置伺服器導航狀態：僅在伺服器確實有導航在運行時才發送停止指令，避免廣播無謂的錯誤訊息
     try {
@@ -547,7 +548,8 @@ class AppProvider extends ChangeNotifier {
     _addMessage('[系統] 已連線 SERVER → ${_endpointLabel()}');
     notifyListeners();
 
-    startPollingNavState();
+    // 移除週期性 navState 輪詢：WS 推送 NAV_STATE: 已即時更新狀態（0ms 延遲）
+    // 斷線恢復時由 _reconnect() 補一次 _pollNavState 即可
     _startWatchdog();
 
     // 麥克風立即啟動（使用者要求一進入 APP 就收音）
@@ -567,7 +569,8 @@ class AppProvider extends ChangeNotifier {
 
   void _startWatchdog() {
     _watchdogTimer?.cancel();
-    _watchdogTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
+    // 30 秒：HTTP healthCheck 偏慢，10s 太密集造成手機無線電晶片無法低功耗
+    _watchdogTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
       if (!_connected) return;
       try {
         await _api.healthCheck();
@@ -599,7 +602,9 @@ class AppProvider extends ChangeNotifier {
       _connected = true;
       _addMessage('[系統] 重新連線 SERVER → ${_endpointLabel()}');
       notifyListeners();
-      startPollingNavState();
+      // 重連後同步一次 server 端 navState（之後靠 WS NAV_STATE: 推送即時更新）
+      // ignore: unawaited_futures
+      _pollNavState();
     } catch (_) {
       // 還沒回來，5 秒後再試
       Future.delayed(const Duration(seconds: 5), _reconnect);
@@ -609,10 +614,23 @@ class AppProvider extends ChangeNotifier {
   Future<void> _startCamera() async {
     try {
       await _camera.initialize();
-      _camera.startStreaming(onFrame: (b) => _ws.sendFrame(b), fps: 10);
+      // 預設待機 fps：收到 NAV_STATE: 後由 _applyCameraFpsForState 切換
+      _camera.startStreaming(onFrame: (b) => _ws.sendFrame(b), fps: _idleFps);
+      _applyCameraFpsForState(_navState);
     } catch (e) {
       _addMessage('[系統] 攝影機：$e');
     }
+  }
+
+  // ── 動態相機 fps（待機 ↔ 導航）───────────────────────────────────────────
+  // takePicture 走 capture pipeline + 磁碟 IO 是耗能大戶；待機時降頻可顯著降溫，
+  // 導航中保持 10 fps 不影響避障即時性。
+  static const int _idleFps = 2;      // IDLE/CHAT：viewer 觀看用
+  static const int _navigatingFps = 10; // 導航/避障/物搜：與原本相同
+
+  void _applyCameraFpsForState(String state) {
+    final isNavigating = !['IDLE', 'CHAT', '', 'unavailable'].contains(state);
+    _camera.setFps(isNavigating ? _navigatingFps : _idleFps);
   }
 
   Future<void> _startMicrophone() async {
@@ -664,6 +682,8 @@ class AppProvider extends ChangeNotifier {
         if (_asrState == 'processing') {
           _asrState = 'standby';
         }
+        // 待機 ↔ 導航切換相機 fps（待機 2 / 導航 10）
+        _applyCameraFpsForState(s);
         notifyListeners();
       }
       return;
@@ -1088,16 +1108,9 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── 輪詢導航狀態 ─────────────────────────────────────────────────────────
+  // ── 導航狀態同步 ─────────────────────────────────────────────────────────
+  // 改為純被動：靠 WS NAV_STATE: 推送即時更新，重連後手動 _pollNavState 補一次
   Timer? _stateTimer;
-
-  void startPollingNavState() {
-    _stateTimer?.cancel();
-    // 10 秒備援輪詢（主要靠 NAV_STATE: WebSocket 推送即時更新）
-    _stateTimer = Timer.periodic(
-      const Duration(seconds: 10), (_) => _pollNavState(),
-    );
-  }
 
   void stopPollingNavState() {
     _stateTimer?.cancel();
