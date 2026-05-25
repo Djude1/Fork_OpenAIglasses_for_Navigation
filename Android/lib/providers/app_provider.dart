@@ -229,11 +229,15 @@ class AppProvider extends ChangeNotifier {
     // 背景預載固定語音快取（不阻塞啟動流程）
     VoiceCacheService.instance.init(_tts);
     LocalVoiceService.instance.init(); // 載入 assets/voice_map.json
-    // chime 播完 → 主動 restart mic（audioplayers 播 chime 期間 Android
-    // 暫停 voiceRecognition AudioRecord callback，不會自動恢復）
+    // chime 播完同步處理兩件事：
+    // 1. restart mic（audioplayers 播 chime 期間 Android 暫停 voiceRecognition
+    //    AudioRecord callback，不會自動恢復）
+    // 2. resume stream player（chime 搶 audio focus 讓 just_audio ExoPlayer
+    //    pause，chime 結束雖然 focus 回來但不自動 resume）
     LocalVoiceService.instance.onChimeComplete = () {
-      debugPrint('[AppProvider] chime 完成 → 主動 restart mic');
+      debugPrint('[AppProvider] chime 完成 → restart mic + resume stream');
       _audio.restartMicNow('chime completed');
+      _audio.resumeStreamIfPaused();
     };
 
     // 接收原生端（Kotlin）的音量鍵手動喚醒事件

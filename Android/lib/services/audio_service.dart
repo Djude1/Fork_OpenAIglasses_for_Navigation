@@ -7,7 +7,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:record/record.dart';
-import 'package:audioplayers/audioplayers.dart';
+import 'package:just_audio/just_audio.dart' as ja;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import '../core/constants.dart';
 
@@ -43,7 +43,7 @@ class AudioService {
   bool _shouldPlayStream = false;   // 是否應維持串流播放
   bool _isReconnecting   = false;   // 防止多個重連同時觸發
   String? _streamUrl;               // 串流 URL（用於重連）
-  StreamSubscription<PlayerState>? _playerStateSub; // 播放狀態監聽
+  StreamSubscription<ja.PlayerState>? _playerStateSub; // 播放狀態監聽（just_audio）
 
   /// 開始錄音並以 PCM16 Chunk 回呼
   Future<void> startMicrophone({required PcmChunkCallback onChunk}) async {
@@ -132,6 +132,18 @@ class AudioService {
     await _restartMic(reason);
   }
 
+  /// chime（LocalVoiceService）播放期間會搶 audio focus 讓 stream player paused，
+  /// chime 結束 audio focus 雖然回來但 just_audio 不自動 resume。由 app_provider
+  /// 在 LocalVoiceService.onChimeComplete 同步呼叫此方法主動 resume stream。
+  void resumeStreamIfPaused() {
+    if (!_shouldPlayStream) return;
+    if (!_player.playing) {
+      debugPrint('[AudioService-STREAM] chime 結束 → 主動 resume stream player @ '
+          '${DateTime.now().toIso8601String()}');
+      _player.play();
+    }
+  }
+
   Future<void> _restartMic(String reason) async {
     if (_restarting || !_recording || _onChunkCb == null) return;
     _restarting = true;
@@ -165,7 +177,23 @@ class AudioService {
   bool get isRecording => _recording;
 
   // ── TTS 下行播放 ─────────────────────────────────────────────────────────
-  final AudioPlayer _player = AudioPlayer();
+  // 用 just_audio（Android 內部 ExoPlayer）取代 audioplayers MediaPlayer：
+  // audioplayers 6.x 對 chunked HTTP wav stream 的 prepare 階段會卡 30s timeout，
+  // ExoPlayer 對串流處理穩定。chime / cached TTS 仍用 audioplayers（短 wav 沒問題）。
+  //
+  // 三個 audio focus 選項全設 false，徹底避免跟 chime（LocalVoiceService
+  // audioplayers）搶 audio focus 造成的循環互砍：
+  // - handleInterruptions: false → 被其他 player 搶 focus 時不自動 pause
+  // - androidApplyAudioAttributes: false → ExoPlayer 不設 AudioAttributes，不
+  //   申請 AudioFocusRequest，不會壓制 mic 的 voiceRecognition AudioRecord
+  // - handleAudioSessionActivation: false → 不啟動 audio session（iOS 主要影響）
+  final ja.AudioPlayer _player = ja.AudioPlayer(
+    handleInterruptions: false,
+    androidApplyAudioAttributes: false,
+    handleAudioSessionActivation: false,
+  );
+  bool _wasStreamPlaying = false;  // 上次 state 的 playing 值（保留作為防禦性 log，
+                                    // 預期 handleInterruptions=false 後不再被 pause）
 
   Future<void> playStreamWav(String host, int port,
       {bool secure = false, String? baseUrl}) async {
@@ -174,31 +202,42 @@ class AudioService {
     _streamUrl = url;
     _shouldPlayStream = true;
 
-    // 設定音量為最大
     await _player.setVolume(1.0);
 
     // 取消舊的狀態監聽，重新設置
     await _playerStateSub?.cancel();
-    _playerStateSub = _player.onPlayerStateChanged.listen((state) {
-      debugPrint('[AudioService] 播放狀態變更: $state');
-      // 只在 completed 時重連（stopped 是 play() 內部切換時觸發，不重連以避免循環）
-      if (_shouldPlayStream && state == PlayerState.completed) {
-        debugPrint('[AudioService] 串流中斷，準備重連...');
+    _wasStreamPlaying = false;
+    _playerStateSub = _player.playerStateStream.listen((state) {
+      debugPrint('[AudioService-STREAM] state @ ${DateTime.now().toIso8601String()}: '
+          'processing=${state.processingState}, playing=${state.playing}');
+      // 只在 completed 時重連（idle/loading/buffering/ready 都不重連）
+      if (_shouldPlayStream && state.processingState == ja.ProcessingState.completed) {
+        debugPrint('[AudioService-STREAM] completed → schedule reconnect');
         _scheduleReconnect();
       }
+      // Audio focus 自動恢復：chime（LocalVoiceService audioplayers）播放時會搶
+      // audio focus → ExoPlayer 自動 pause stream（playing=false）；chime 結束後
+      // audio focus 雖然回來但 just_audio 不自動 resume → server 推 PCM 都白費。
+      // 在這裡偵測「之前在 playing 但現在 paused 且仍 ready」→ 主動 play()。
+      if (_shouldPlayStream &&
+          state.processingState == ja.ProcessingState.ready &&
+          _wasStreamPlaying && !state.playing) {
+        debugPrint('[AudioService-STREAM] 偵測到從 playing 變 paused（audio focus loss）→ 主動 resume');
+        _player.play();
+      }
+      _wasStreamPlaying = state.playing;
     });
 
-    // 監聽播放器錯誤
-    _player.onLog.listen((msg) {
-      debugPrint('[AudioService] 播放器日誌: $msg');
-    });
-
-    debugPrint('[AudioService] 連線 /stream.wav: $url');
+    debugPrint('[AudioService-STREAM] 連線 /stream.wav: $url @ ${DateTime.now().toIso8601String()}');
     try {
-      await _player.play(UrlSource(url));
-      debugPrint('[AudioService] 播放已啟動');
+      // just_audio: setUrl 觸發 prepare（ExoPlayer 處理 chunked stream 不會卡），
+      // play() 開始播放（non-blocking，不等 stream 結束）
+      await _player.setUrl(url);
+      debugPrint('[AudioService-STREAM] setUrl() returned @ ${DateTime.now().toIso8601String()}');
+      _player.play();   // 不 await，play 觸發後立即返回
+      debugPrint('[AudioService-STREAM] play() called @ ${DateTime.now().toIso8601String()}');
     } catch (e) {
-      debugPrint('[AudioService] 播放失敗: $e');
+      debugPrint('[AudioService-STREAM] 連線失敗: $e');
       _scheduleReconnect();
     }
   }
@@ -208,20 +247,23 @@ class AudioService {
     // 防止多個重連同時觸發（racing condition 保護）
     if (!_shouldPlayStream || _streamUrl == null || _isReconnecting) return;
     _isReconnecting = true;
+    final scheduledAt = DateTime.now();
+    debugPrint('[AudioService-STREAM] _scheduleReconnect 觸發 @ ${scheduledAt.toIso8601String()}');
     Future.delayed(const Duration(milliseconds: 800), () async {
       if (!_shouldPlayStream || _streamUrl == null) {
         _isReconnecting = false;
         return;
       }
-      debugPrint('[AudioService] 重連 /stream.wav...');
+      debugPrint('[AudioService-STREAM] 重連 /stream.wav... @ ${DateTime.now().toIso8601String()}');
       try {
         // 先確保播放器處於乾淨狀態再設定新來源
         await _player.stop();
         await Future.delayed(const Duration(milliseconds: 100));
-        await _player.play(UrlSource(_streamUrl!));
-        debugPrint('[AudioService] 重連成功');
+        await _player.setUrl(_streamUrl!);
+        _player.play();
+        debugPrint('[AudioService-STREAM] 重連成功 @ ${DateTime.now().toIso8601String()}（耗時 ${DateTime.now().difference(scheduledAt).inMilliseconds}ms）');
       } catch (e) {
-        debugPrint('[AudioService] 重連失敗: $e');
+        debugPrint('[AudioService-STREAM] 重連失敗 @ ${DateTime.now().toIso8601String()}: $e（耗時 ${DateTime.now().difference(scheduledAt).inMilliseconds}ms）');
         _isReconnecting = false;
         // 連線失敗，2 秒後再試（加長間隔避免短時間狂打 server）
         Future.delayed(const Duration(seconds: 2), _scheduleReconnect);
