@@ -94,6 +94,10 @@ recordings/
 # 只忽略個人記憶（含私人資料），commands/ 允許入庫
 .claude/memory/
 .claude/settings.local.json
+# CLAUDE.md 為個人/全域行為規則，不入庫
+CLAUDE.md
+.claude/CLAUDE.md
+Website/CLAUDE.md
 
 # ══════════════════════════════════════════════════════
 # IDE / 編輯器
