@@ -197,7 +197,11 @@ class AudioService {
 
   Future<void> playStreamWav(String host, int port,
       {bool secure = false, String? baseUrl}) async {
-    final url = AppConstants.streamWav(host, port,
+    // 改用 24kHz 高品質串流（/stream24k.wav）取代原 8kHz /stream.wav：
+    // server WaveNet 原本就生成 24k PCM，舊路為了相容 ESP32 喇叭被強降到 8k 還
+    // 額外做 audioop.mul ×1.8 放大，導致 aliasing 雜訊 + clipping。改用 24k
+    // 直推路後，WaveNet 原音直接灌入 ExoPlayer，雜訊消失 + 音質回到 CD 級。
+    final url = AppConstants.streamWav24k(host, port,
         secure: secure, baseUrl: baseUrl);
     _streamUrl = url;
     _shouldPlayStream = true;

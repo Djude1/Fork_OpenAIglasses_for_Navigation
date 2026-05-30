@@ -83,8 +83,12 @@ class AppConstants {
       _wsBase(host, port, secure, baseUrl, '/ws/viewer');
 
   // ── 音訊下行（TTS）─────────────────────────────────────────────────────
+  // /stream.wav     → 8k PCM，給 ESP32 硬體喇叭用
+  // /stream24k.wav  → 24k PCM，給 APP just_audio (ExoPlayer)，無損 WaveNet 原音
   static String streamWav(String host, int port, {bool secure = false, String? baseUrl}) =>
       '${httpBase(host, port, secure: secure, baseUrl: baseUrl)}/stream.wav';
+  static String streamWav24k(String host, int port, {bool secure = false, String? baseUrl}) =>
+      '${httpBase(host, port, secure: secure, baseUrl: baseUrl)}/stream24k.wav';
 
   // ── SharedPreferences Keys ───────────────────────────────────────────────
   static const String keySecure      = 'server_secure';

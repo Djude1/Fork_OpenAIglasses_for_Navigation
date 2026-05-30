@@ -47,9 +47,11 @@ from config import (
 
 # ---- 引入我们的模块 ----
 from audio_stream import (
-    register_stream_route,  # 挂 /stream.wav
-    broadcast_pcm16_realtime,  # 实时向连接分发 16k PCM
-    hard_reset_audio,  # 音频+AI 播放总闸
+    register_stream_route,        # 挂 /stream.wav (8k, 給 ESP32)
+    register_stream24k_route,     # 挂 /stream24k.wav (24k, 給 APP just_audio)
+    broadcast_pcm16_realtime,     # 8k PCM 实时向 ESP32 客户端分发
+    broadcast_pcm24k_realtime,    # 24k PCM 实时向 APP 客户端分发（無損 WaveNet 原音）
+    hard_reset_audio,             # 音频+AI 播放总闸
     is_playing_now,
 )
 from omni_client import stream_chat, generate_text_async
@@ -1003,14 +1005,20 @@ async def start_ai_with_text(user_text: str):
                         pcm24 = b""
                     print(f"[TTS-DEBUG] app_main received audio_b64: decoded={len(pcm24)} bytes (24k)", flush=True)
                     if pcm24:
-                        # 24k → 8k (使用ratecv保证音调和速度不变)
+                        # 8k 路（ESP32 硬體 / 模擬器 / LOCAL_MODE）：ratecv 降採樣
+                        # 24k 路（APP just_audio）：直接送原始 24k，零損失
+                        # 移除原 audioop.mul 0.60 衰減 — 0.60 × VOLUME_GAIN(3) = 1.8x
+                        # 易 clipping，改由 audio_stream.VOLUME_GAIN 單一處控制 ESP32 音量
                         pcm8k, rate_state = audioop.ratecv(
                             pcm24, 2, 1, 24000, 8000, rate_state
                         )
-                        pcm8k = audioop.mul(pcm8k, 2, 0.60)
                         if pcm8k:
-                            print(f"[TTS-DEBUG] app_main broadcast_pcm16_realtime: {len(pcm8k)} bytes (8k)", flush=True)
-                            await broadcast_pcm16_realtime(pcm8k)
+                            print(f"[TTS-DEBUG] app_main dual-broadcast: 8k={len(pcm8k)}B + 24k={len(pcm24)}B", flush=True)
+                            # 同時推兩路（asyncio.gather 避免序列化等待，節拍各自獨立）
+                            await asyncio.gather(
+                                broadcast_pcm16_realtime(pcm8k),
+                                broadcast_pcm24k_realtime(pcm24),
+                            )
                         else:
                             print(f"[TTS-DEBUG] app_main resample 後 pcm8k 為空，跳過 broadcast", flush=True)
 
@@ -1398,8 +1406,9 @@ def api_debug_status():
     }
 
 
-# 注册 /stream.wav
+# 注册 /stream.wav (8k, ESP32) 与 /stream24k.wav (24k, APP just_audio)
 register_stream_route(app)
+register_stream24k_route(app)
 
 
 # ---------- WebSocket：WebUI 文本（ASR/AI 状态推送） ----------
